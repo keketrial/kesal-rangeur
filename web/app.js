@@ -41,8 +41,8 @@ function renderTabs() {
 async function refreshStatus() {
   try { S.status = await api("/api/status"); } catch (e) { return; }
   const st = S.status;
-  $("#pill").textContent = st.scanning ? t("pill_busy") : (st.essai ? t("pill_dry") : "Actif");
-  $("#pill").className = "pill" + (st.scanning ? " busy" : "");
+  $("#pill").textContent = st.scanning ? t("pill_busy") : (st.essai ? t("pill_dry") : (st.en_cours ? "Rangement…" : "Mode réel"));
+  $("#pill").className = "pill" + (st.scanning || !st.essai ? " busy" : "");
   $("#btnScan").disabled = st.scanning;
   $("#btnScan").innerHTML = st.scanning ? `<span class="spin"></span>${t("scanning")}` : t("scan");
   renderTabs();
@@ -72,7 +72,7 @@ function vHome(v) {
   const stat = (n, label, f) => `<a class="stat" href="#/plan" data-filter="${f}"><b>${n || 0}</b><span>${label}</span></a>`;
   v.innerHTML = `
     <h2>Accueil</h2><p class="lead">Ce que l'appli a compris des dossiers d'arrivée.</p>
-    ${st.essai ? `<div class="banner"><span>🛡️</span><span>${t("dry_banner")} ${helpBtn("essai")}</span></div>` : ""}
+    ${st.essai ? `<div class="banner"><span>🛡️</span><span>${t("dry_banner")} ${helpBtn("essai")}</span></div>` : `<div class="banner bad"><span>⚡</span><span><b>Mode réel :</b> les éléments « À ranger » peuvent être copiés dans votre bibliothèque (bouton « Ranger »). Chaque rangement est annulable depuis l'Historique. ${helpBtn("essai")}</span></div>`}
     ${st.erreur ? `<div class="banner bad"><span>⚠️</span><span>${esc(st.erreur)}</span></div>` : ""}
     ${ready ? "" : `<div class="card"><b>Pour démarrer</b><ul class="steps">
       ${step(st.tmdb_ok, "Clé TMDB (pour les titres en français)", "tmdb", "#/reglages")}
@@ -81,7 +81,7 @@ function vHome(v) {
     </ul></div>`}
     <div class="grid">
       ${stat(c.ranger, t("d_ranger"), "ranger")}${stat(c.doublon, t("d_doublon"), "doublon")}${stat(c.a_trier, t("d_a_trier"), "a_trier")}
-      ${stat(c.attendre, t("d_attendre"), "attendre")}${stat(c.ignorer, t("d_ignorer"), "ignorer")}
+      ${stat(c.attendre, t("d_attendre"), "attendre")}${stat(c.ignorer, t("d_ignorer"), "ignorer")}${c.fait ? stat(c.fait, "Rangés", "fait") : ""}
     </div>
     <p class="muted" style="margin-top:14px">${st.dernier_scan ? "Dernière analyse : " + new Date(st.dernier_scan * 1000).toLocaleString() : "Aucune analyse pour l'instant — cliquez sur « " + t("scan") + " »."}
     ${st.films_connus != null ? ` · ${st.films_connus} films connus · ${st.choix_retenus || 0} choix retenu(s)` : ""}</p>
@@ -114,26 +114,44 @@ function itemCard(it, opts = {}) {
     case "a_trier": tags.unshift(`<span class="tag warn">À trier</span>`); detail = `<span class="path">${esc(d.raison)}</span>`; break;
     case "attendre": tags.unshift(`<span class="tag warn">En attente</span>`); detail = `<span class="path">${esc(d.raison)}</span>`; break;
     case "ignorer": tags.unshift(`<span class="tag">Ignoré</span>`); detail = `<span class="path">${esc(d.raison)}</span>`; break;
+    case "fait": tags.unshift(`<span class="tag ok">✓ Rangé</span>`); detail = `<span class="path mono">→ ${esc(short(d.vers, 90))}</span>`; break;
   }
-  const actions = opts.noActions ? "" : `<div class="actions">
+  const real = S.status && !S.status.essai;
+  const canRun = d.decision === "ranger";
+  const actions = opts.noActions || d.decision === "fait" ? "" : `<div class="actions">
       <button class="btn small" data-fix="${esc(it.nom)}">Corriger la fiche…</button>
-      <button class="btn small" disabled title="Désactivé : mode essai à blanc">Ranger maintenant</button></div>`;
+      ${canRun ? (real ? `<button class="btn small primary" data-run="${esc(it.nom)}">Ranger maintenant</button>` : `<button class="btn small" disabled title="Désactivé : mode essai à blanc (Réglages)">Ranger maintenant</button>`) : ""}</div>`;
   return `<div class="item">${poster(r && r.affiche)}<div class="body">
     <div class="orig mono">${esc(it.nom)}</div><div class="title">${title}</div>
     <div class="row">${tags.join("")}</div>${detail}${actions}</div></div>`;
+}
+function bindRun(root) {
+  root.querySelectorAll("[data-run]").forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true;
+    try { await api("/api/run", { method: "POST", body: { nom: b.dataset.run } }); toast("Rangement lancé…"); setTimeout(async () => { await loadPlan(); await refreshStatus(); render(); }, 2500); }
+    catch (e) { toast(e.message); b.disabled = false; }
+  }));
 }
 function bindFix(root) { root.querySelectorAll("[data-fix]").forEach((b) => b.addEventListener("click", () => openSearch(b.dataset.fix))); }
 
 async function vPlan(v) {
   if (!S.items.length) await loadPlan();
-  const c = counts(); const order = ["ranger", "doublon", "a_trier", "attendre", "ignorer"];
+  const c = counts(); const order = ["ranger", "doublon", "a_trier", "attendre", "ignorer", ...(c.fait ? ["fait"] : [])];
+  const real = S.status && !S.status.essai;
   const list = S.items.filter((i) => decisionOf(i) === S.filter);
   v.innerHTML = `<h2>En attente ${helpBtn("attente")}</h2><p class="lead">Ce que l'appli ferait de chaque élément arrivé. Rien n'est exécuté.</p>
-    <div class="chips">${order.map((k) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${t("d_" + k)} (${c[k] || 0})</button>`).join("")}</div>
+    <div class="chips">${order.map((k) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${k === "fait" ? "Rangés" : t("d_" + k)} (${c[k] || 0})</button>`).join("")}
+      ${real && S.filter === "ranger" && list.length ? `<button class="btn small primary" id="runAll" style="margin-left:auto">Tout ranger (${list.length})</button>` : ""}</div>
     ${S.items.length === 0 ? `<div class="empty"><b>Rien à afficher</b>Lancez une analyse avec le bouton en haut à droite.</div>` :
       list.length === 0 ? `<div class="empty"><b>Aucun élément dans cette catégorie</b></div>` : list.map((i) => itemCard(i)).join("")}`;
   v.querySelectorAll("[data-f]").forEach((b) => b.addEventListener("click", () => { S.filter = b.dataset.f; vPlan(v); }));
-  bindFix(v);
+  bindFix(v); bindRun(v);
+  const ra = $("#runAll");
+  if (ra) ra.onclick = async () => {
+    if (!confirm(`Ranger les ${list.length} élément(s) « À ranger » ? Chaque rangement pourra être annulé depuis l'Historique.`)) return;
+    ra.disabled = true;
+    try { await api("/api/run", { method: "POST", body: {} }); toast("Rangement lancé…"); setTimeout(async () => { await loadPlan(); await refreshStatus(); render(); }, 3000); } catch (e) { toast(e.message); ra.disabled = false; }
+  };
 }
 
 // ---------- À trier ----------
@@ -184,9 +202,26 @@ function openSearch(nom) {
 }
 
 // ---------- Historique ----------
+const fmtSize = (n) => n > 1e9 ? (n / 1e9).toFixed(2) + " Go" : n > 1e6 ? (n / 1e6).toFixed(1) + " Mo" : n + " o";
 async function vHistory(v) {
+  const h = (await api("/api/history")).entrees;
+  const real = S.status && !S.status.essai;
   v.innerHTML = `<h2>Historique ${helpBtn("historique")}</h2><p class="lead">Chaque rangement : avant → après, avec un bouton pour l'annuler.</p>
-    <div class="empty"><b>Aucun rangement pour l'instant</b>En mode essai à blanc, rien n'est exécuté, donc rien n'est écrit ici.</div>`;
+  ${h.length === 0 ? `<div class="empty"><b>Aucun rangement pour l'instant</b>En mode essai à blanc, rien n'est exécuté, donc rien n'est écrit ici.</div>` :
+    h.map((e) => `<div class="card"><div class="row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <span class="tag ${e.statut === "fait" ? "ok" : e.statut === "erreur" ? "bad" : ""}">${e.statut === "fait" ? "Rangé" : e.statut === "erreur" ? "Erreur" : "Annulé"}</span>
+      <b>${esc(e.titre)}</b>${e.categorie ? `<span class="tag info">${catName(e.categorie)}</span>` : ""}
+      <span class="muted">${new Date(e.t * 1000).toLocaleString()}</span>${e.taille_totale ? `<span class="muted">· ${fmtSize(e.taille_totale)}</span>` : ""}
+      ${e.fichiers[0] ? `<span class="tag">${esc(e.fichiers[0].methode)}</span>` : ""}</div>
+      <div class="mono muted" style="margin-top:6px">${esc(e.nom)}</div><div class="mono" style="margin-top:2px">→ ${esc(e.vers)}</div>
+      ${e.motif ? `<div class="path">${esc(e.motif)}</div>` : ""}
+      <div class="actions">${e.statut === "fait" ? `<button class="btn small danger" data-undo="${esc(e.id)}">Annuler ce rangement</button>` : ""}
+      ${e.statut === "erreur" && real ? `<button class="btn small" data-run="${esc(e.nom)}">Réessayer</button>` : ""}</div></div>`).join("")}`;
+  v.querySelectorAll("[data-undo]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Annuler ce rangement ? Les fichiers rangés par l'appli seront retirés de la bibliothèque. L'original dans le dossier d'arrivée n'est pas touché.")) return;
+    try { await api("/api/undo", { method: "POST", body: { id: b.dataset.undo } }); toast("Rangement annulé"); vHistory(v); } catch (e) { toast("Annulation refusée : " + e.message); }
+  }));
+  bindRun(v);
 }
 
 // ---------- Bibliothèque ----------
@@ -233,14 +268,24 @@ async function vSettings(v) {
     <p class="muted" style="margin-top:0">Exemple : « Pékin Express » → télé / téléréalité. Une règle l'emporte sur la devinette de TMDB.</p><div id="rules"></div>
     <button class="btn small" id="addRule" type="button">+ Ajouter une règle</button></div>
 
+  <div class="card"><h3 style="margin-top:0">Fonctionnement ${helpBtn("fonctionnement")}</h3>
+    <label class="field" style="display:flex;gap:10px;align-items:flex-start"><input id="s_essai" type="checkbox" style="width:auto;min-height:0;margin-top:4px" ${s.essai ? "checked" : ""}>
+      <span style="display:block"><b>Mode essai à blanc</b> ${helpBtn("essai")}<br><span class="muted" style="font-weight:400">Coché : l'appli analyse et propose, mais n'écrit rien. Décochez seulement quand vous avez validé le résultat.</span></span></label>
+    <div class="two"><label class="field"><span>Méthode de copie ${helpBtn("methode")}</span><select id="s_method">
+      ${[["auto", "Automatique (reflink, puis lien physique, puis copie)"], ["reflink", "Reflink seulement"], ["hardlink", "Lien physique seulement"], ["copy", "Copie normale seulement"]].map(([k, n]) => `<option value="${k}" ${s.copy_method === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+      <label class="field"><span>Analyse automatique toutes les (min) ${helpBtn("auto")}</span><input id="s_interval" type="number" min="0" value="${s.scan_interval_min}"></label></div>
+    <label class="field" style="display:flex;gap:10px;align-items:center"><input id="s_auto" type="checkbox" style="width:auto;min-height:0" ${s.auto_range ? "checked" : ""}><span>Ranger seul ce qui est sûr après chaque analyse (hors essai à blanc)</span></label></div>
+
   <div class="card"><h3 style="margin-top:0">Plex, Jellyfin, Home Assistant ${helpBtn("services")}</h3>
-    <div class="banner info"><span>ℹ️</span><span>Ces réglages sont enregistrés mais pas encore utilisés : le rafraîchissement automatique viendra avec la copie réelle.</span></div>
+    <div class="banner info"><span>ℹ️</span><span>Après un rangement réel, Plex et Jellyfin sont prévenus pour rafraîchir leur bibliothèque. « Tester » ne fait que lire, rien n'est modifié chez eux.</span></div>
     <div class="two"><label class="field"><span>Adresse de Plex</span><input id="s_plexurl" value="${esc(s.plex_url)}" placeholder="http://192.168.1.40:32400"></label>
       <label class="field"><span>Jeton Plex ${secTag(s.secrets.plex)}</span><input id="s_plextok" type="password" autocomplete="off" placeholder="vide = inchangé"></label></div>
     <div class="two"><label class="field"><span>Adresse de Jellyfin</span><input id="s_jfurl" value="${esc(s.jellyfin_url)}" placeholder="http://192.168.1.40:8096"></label>
       <label class="field"><span>Clé API Jellyfin ${secTag(s.secrets.jellyfin)}</span><input id="s_jftok" type="password" autocomplete="off" placeholder="vide = inchangée"></label></div>
     <div class="two"><label class="field"><span>Adresse de Home Assistant</span><input id="s_haurl" value="${esc(s.ha_url)}" placeholder="http://192.168.1.41:8123"></label>
-      <label class="field"><span>Jeton Home Assistant ${secTag(s.secrets.ha)}</span><input id="s_hatok" type="password" autocomplete="off" placeholder="vide = inchangé"></label></div></div>
+      <label class="field"><span>Jeton Home Assistant ${secTag(s.secrets.ha)}</span><input id="s_hatok" type="password" autocomplete="off" placeholder="vide = inchangé"></label></div>
+    <label class="field"><span>Service de notification Home Assistant (facultatif)</span><input id="s_haserv" value="${esc(s.ha_service)}" placeholder="notify.mobile_app_mon_iphone"></label>
+    <button class="btn" id="b_svctest" type="button">Tester les services</button> <span id="svcres" class="muted"></span></div>
   <div class="save-bar"><span class="muted" id="saveInfo"></span><button class="btn primary" id="saveBtn" type="button">${t("save")}</button></div>`;
   drawInputs(); drawFilmLibs(); drawRules();
   $("#addInput").onclick = () => { collect(); s.inputs.push({ path: "", mode: "auto", action: "copy", settle_minutes: 30 }); drawInputs(); };
@@ -255,6 +300,12 @@ async function vSettings(v) {
     const r = await api("/api/tmdb/test", { method: "POST" }); toast(r.message);
   };
   $("#saveBtn").onclick = () => save(false);
+  $("#b_svctest").onclick = async () => {
+    await save(true); $("#svcres").textContent = "Test en cours…";
+    const r = await api("/api/services/test", { method: "POST" });
+    const f = (n, x) => `${n} : ${x.ok === null ? "non configuré" : (x.ok ? "✓ " : "✗ ") + x.message}`;
+    $("#svcres").innerHTML = [f("Plex", r.plex), f("Jellyfin", r.jellyfin), f("Home Assistant", r.ha)].map(esc).join("<br>");
+  };
 }
 function drawInputs() {
   const s = S.settings;
@@ -297,8 +348,11 @@ function collect() {
 async function save(quiet) {
   collect(); const s = S.settings;
   const body = { language: s.language, inputs: s.inputs.filter((i) => i.path), destinations: s.destinations, film_libraries: s.film_libraries, rules: s.rules,
-    plex_url: $("#s_plexurl").value, jellyfin_url: $("#s_jfurl").value, ha_url: $("#s_haurl").value,
+    plex_url: $("#s_plexurl").value, jellyfin_url: $("#s_jfurl").value, ha_url: $("#s_haurl").value, ha_service: $("#s_haserv").value,
+    essai: $("#s_essai").checked, copy_method: $("#s_method").value, scan_interval_min: Math.max(0, +$("#s_interval").value || 0), auto_range: $("#s_auto").checked,
     tmdb_key: $("#s_tmdb").value, plex_token: $("#s_plextok").value, jellyfin_key: $("#s_jftok").value, ha_token: $("#s_hatok").value };
+  if (S.status && S.status.essai && !body.essai &&
+      !confirm("Vous allez DÉSACTIVER l'essai à blanc.\n\nÀ partir de maintenant, « Ranger » copiera réellement dans votre bibliothèque (chaque rangement reste annulable depuis l'Historique).\n\nContinuer ?")) { $("#s_essai").checked = true; return; }
   try { await api("/api/settings", { method: "POST", body }); if (!quiet) toast(t("saved")); await refreshStatus(); if (!quiet) vSettings($("#view")); }
   catch (e) { toast("Erreur : " + e.message); }
 }

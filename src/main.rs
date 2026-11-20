@@ -1,5 +1,7 @@
 mod config;
+mod exec;
 mod library;
+mod notify;
 mod norm;
 mod parser;
 mod plan;
@@ -89,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
                         }
                         plan::Decision::Attendre { raison } => println!("    ATTENDRE : {raison}"),
                         plan::Decision::Ignorer { raison } => println!("    ignoré : {raison}"),
+                        plan::Decision::Fait { vers } => println!("    FAIT → {}", vers.display()),
                     }
                 }
             }

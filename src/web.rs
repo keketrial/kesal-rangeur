@@ -1,6 +1,8 @@
 //! Serveur web : API JSON + interface intégrée au binaire.
 
 use crate::config::{Category, Config, Input, Rule, Secrets};
+use crate::exec::{self, Action, Entry, History};
+use crate::notify;
 use crate::library::LibEntry;
 use crate::plan::{Choice, Decision, Item, Planner};
 use crate::tmdb::{Candidate, Media, Tmdb};
@@ -12,7 +14,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -44,6 +46,10 @@ pub struct AppState {
     pub items: RwLock<Vec<Item>>,
     pub scan: StdMutex<ScanState>,
     pub log: StdMutex<VecDeque<LogLine>>,
+    pub history: History,
+    /// Éléments en cours de rangement (évite les doubles clics) et file d'attente : une copie à la fois.
+    pub busy: StdMutex<HashSet<String>>,
+    pub gate: tokio::sync::Semaphore,
 }
 
 impl AppState {
@@ -76,6 +82,7 @@ pub async fn build_tmdb(cfg: &Config) -> Option<Arc<Tmdb>> {
 pub async fn serve(cfg_path: PathBuf, bind: String) -> anyhow::Result<()> {
     let cfg = if cfg_path.exists() { Config::load(&cfg_path)? } else { default_config() };
     let tmdb = build_tmdb(&cfg).await;
+    let data_dir = cfg.data_dir.clone();
     let st: S = Arc::new(AppState {
         cfg_path,
         cfg: RwLock::new(cfg),
@@ -84,6 +91,9 @@ pub async fn serve(cfg_path: PathBuf, bind: String) -> anyhow::Result<()> {
         items: RwLock::new(vec![]),
         scan: StdMutex::new(ScanState::default()),
         log: StdMutex::new(VecDeque::new()),
+        history: History::load(&data_dir),
+        busy: StdMutex::new(HashSet::new()),
+        gate: tokio::sync::Semaphore::new(1),
     });
     st.log("info", format!("kesal-rangeur {} démarré sur {bind}", env!("CARGO_PKG_VERSION")));
     let app = Router::new()
@@ -102,7 +112,13 @@ pub async fn serve(cfg_path: PathBuf, bind: String) -> anyhow::Result<()> {
         .route("/api/library", get(api_library))
         .route("/api/log", get(api_log))
         .route("/api/help", get(api_help))
-        .with_state(st);
+        .route("/api/run", post(api_run))
+        .route("/api/history", get(api_history))
+        .route("/api/undo", post(api_undo))
+        .route("/api/services/test", post(api_services_test))
+        .with_state(st.clone());
+    // Analyse périodique (si réglée) : rien n'est écrit tant que l'essai à blanc est actif.
+    tokio::spawn(scheduler(st.clone()));
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     axum::serve(listener, app).await?;
     Ok(())
@@ -113,6 +129,10 @@ pub fn default_config() -> Config {
         language: "fr-FR".into(),
         tmdb_key_file: String::new(),
         integrations: Default::default(),
+        essai: true,
+        copy_method: Default::default(),
+        scan_interval_min: 0,
+        auto_range: false,
         data_dir: "data".into(),
         inputs: vec![],
         destinations: BTreeMap::new(),
@@ -126,7 +146,7 @@ pub fn default_config() -> Config {
 async fn api_status(State(st): State<S>) -> R<Value> {
     let cfg = st.cfg.read().await;
     let items = st.items.read().await;
-    let mut counts = json!({"ranger":0,"doublon":0,"a_trier":0,"attendre":0,"ignorer":0});
+    let mut counts = json!({"ranger":0,"doublon":0,"a_trier":0,"attendre":0,"ignorer":0,"fait":0});
     for it in items.iter() {
         let k = match it.decision {
             Decision::Ranger { .. } => "ranger",
@@ -134,6 +154,7 @@ async fn api_status(State(st): State<S>) -> R<Value> {
             Decision::ATrier { .. } => "a_trier",
             Decision::Attendre { .. } => "attendre",
             Decision::Ignorer { .. } => "ignorer",
+            Decision::Fait { .. } => "fait",
         };
         counts[k] = json!(counts[k].as_u64().unwrap_or(0) + 1);
     }
@@ -146,7 +167,8 @@ async fn api_status(State(st): State<S>) -> R<Value> {
     let tmdb_ok = st.tmdb.read().await.is_some();
     Ok(Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "essai": true,
+        "essai": cfg.essai,
+        "en_cours": st.busy.lock().unwrap().len(),
         "scanning": scanning,
         "dernier_scan": dernier,
         "erreur": erreur,
@@ -209,6 +231,13 @@ async fn run_scan(st: S) {
                 sc.last = Some(now());
             }
             st.log("info", format!("Analyse terminée : {n} élément(s)"));
+            let (essai, auto) = {
+                let c = st.cfg.read().await;
+                (c.essai, c.auto_range)
+            };
+            if auto && !essai {
+                run_ready(st.clone(), None).await;
+            }
         }
         Err(e) => {
             {
@@ -309,6 +338,12 @@ struct SettingsIn {
     plex_url: String,
     jellyfin_url: String,
     ha_url: String,
+    #[serde(default)]
+    ha_service: String,
+    essai: bool,
+    copy_method: exec::Method,
+    scan_interval_min: u64,
+    auto_range: bool,
     /// Secrets : vides = inchangés.
     #[serde(default)]
     tmdb_key: String,
@@ -345,6 +380,11 @@ async fn api_settings_get(State(st): State<S>) -> R<Value> {
         "plex_url": cfg.integrations.plex_url,
         "jellyfin_url": cfg.integrations.jellyfin_url,
         "ha_url": cfg.integrations.ha_url,
+        "ha_service": cfg.integrations.ha_service,
+        "essai": cfg.essai,
+        "copy_method": cfg.copy_method,
+        "scan_interval_min": cfg.scan_interval_min,
+        "auto_range": cfg.auto_range,
         "secrets": {"tmdb": hint(&sec.tmdb), "plex": hint(&sec.plex), "jellyfin": hint(&sec.jellyfin), "ha": hint(&sec.ha)},
         "dossiers_introuvables": missing,
         "categories": ["film","serie","dessin_anime","telerealite","documentaire","spectacle"],
@@ -361,6 +401,17 @@ async fn api_settings_set(State(st): State<S>, Json(s): Json<SettingsIn>) -> R<V
     cfg.integrations.plex_url = s.plex_url.trim().to_string();
     cfg.integrations.jellyfin_url = s.jellyfin_url.trim().to_string();
     cfg.integrations.ha_url = s.ha_url.trim().to_string();
+    cfg.integrations.ha_service = s.ha_service.trim().to_string();
+    if cfg.essai != s.essai {
+        let msg = if s.essai { "Mode essai à blanc ACTIVÉ" } else { "Mode essai à blanc DÉSACTIVÉ : les rangements seront réels" };
+        drop(cfg);
+        st.log("info", msg);
+        cfg = st.cfg.write().await;
+    }
+    cfg.essai = s.essai;
+    cfg.copy_method = s.copy_method;
+    cfg.scan_interval_min = s.scan_interval_min;
+    cfg.auto_range = s.auto_range;
     let mut sec = Secrets::load(&cfg.data_dir);
     for (dst, src) in [(&mut sec.tmdb, &s.tmdb_key), (&mut sec.plex, &s.plex_token), (&mut sec.jellyfin, &s.jellyfin_key), (&mut sec.ha, &s.ha_token)] {
         if !src.trim().is_empty() {
@@ -459,4 +510,149 @@ async fn api_help(Query(q): Query<HelpQ>) -> impl IntoResponse {
         _ => include_str!("../web/help.fr.html"),
     };
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html)
+}
+
+// ---------- rangement réel (refusé tant que l'essai à blanc est actif) ----------
+
+async fn scheduler(st: S) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        let (every, last, running) = {
+            let c = st.cfg.read().await;
+            let sc = st.scan.lock().unwrap();
+            (c.scan_interval_min, sc.last.unwrap_or(0), sc.running)
+        };
+        if every > 0 && !running && now().saturating_sub(last) >= every * 60 {
+            st.scan.lock().unwrap().running = true;
+            run_scan(st.clone()).await;
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct RunReq {
+    nom: Option<String>,
+}
+
+async fn api_run(State(st): State<S>, Json(req): Json<RunReq>) -> R<Value> {
+    if st.cfg.read().await.essai {
+        return Err((StatusCode::FORBIDDEN, "Mode essai à blanc actif : rien n'est écrit. Désactivez-le dans les Réglages quand vous êtes prêt.".into()));
+    }
+    let st2 = st.clone();
+    tokio::spawn(async move { run_ready(st2, req.nom).await });
+    Ok(Json(json!({"demarre": true})))
+}
+
+/// Range les éléments « À ranger » (un seul si `only` est donné). Une copie à la fois.
+async fn run_ready(st: S, only: Option<String>) {
+    let todo: Vec<Item> = st
+        .items
+        .read()
+        .await
+        .iter()
+        .filter(|i| matches!(i.decision, Decision::Ranger { .. }) && only.as_ref().map_or(true, |n| &i.nom == n))
+        .cloned()
+        .collect();
+    for it in todo {
+        {
+            let mut b = st.busy.lock().unwrap();
+            if !b.insert(it.nom.clone()) {
+                continue;
+            }
+        }
+        let _permit = st.gate.acquire().await;
+        run_one(&st, &it).await;
+        st.busy.lock().unwrap().remove(&it.nom);
+    }
+}
+
+async fn run_one(st: &S, it: &Item) {
+    let cfg = st.cfg.read().await.clone();
+    if cfg.essai {
+        return; // double sécurité
+    }
+    let Decision::Ranger { vers, renommages, .. } = &it.decision else { return };
+    let Some(input) = cfg.inputs.iter().find(|i| i.path == it.entree).cloned() else { return };
+    let (titre, cat) = it.reconnu.as_ref().map(|r| (r.titre.clone(), Some(r.categorie))).unwrap_or((it.nom.clone(), None));
+    // Délais entre les essais (secondes). KESAL_RETRY_DELAYS="0,1,1" sert aux tests.
+    let delays: Vec<u64> = std::env::var("KESAL_RETRY_DELAYS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).filter(|v: &Vec<u64>| !v.is_empty()).unwrap_or_else(|| vec![0, 20, 120]);
+    let mut last_err = String::new();
+    for (n, d) in delays.iter().enumerate() {
+        if *d > 0 {
+            st.log("info", format!("Nouvel essai dans {d} s pour « {} »…", it.nom));
+            tokio::time::sleep(std::time::Duration::from_secs(*d)).await;
+        }
+        let (src, dst, ren, nom, titre2, action, method, settle) = (it.source.clone(), vers.clone(), renommages.clone(), it.nom.clone(), titre.clone(), Action::from_str(&input.action), cfg.copy_method, input.settle_minutes);
+        let res = tokio::task::spawn_blocking(move || {
+            exec::execute(&exec::Request { nom: &nom, titre: &titre2, categorie: cat, source: &src, vers: &dst, renommages: &ren, action, method, settle_minutes: settle })
+        })
+        .await;
+        match res {
+            Ok(Ok(entry)) => {
+                st.log("info", format!("Rangé : « {} » → {} ({} fichier(s), {})", it.nom, entry.vers.display(), entry.fichiers.len(), entry.fichiers.first().map(|f| f.methode.as_str()).unwrap_or("")));
+                st.history.add(entry);
+                let mut items = st.items.write().await;
+                if let Some(slot) = items.iter_mut().find(|x| x.nom == it.nom) {
+                    slot.decision = Decision::Fait { vers: vers.clone() };
+                }
+                drop(items);
+                after_success(st, &cfg, it, cat).await;
+                return;
+            }
+            Ok(Err(e)) => {
+                last_err = e.to_string();
+                // Inutile de réessayer si ce n'est pas un souci passager.
+                if !matches!(e, exec::ExecError::Io(_)) || n + 1 == delays.len() {
+                    break;
+                }
+            }
+            Err(e) => {
+                last_err = e.to_string();
+                break;
+            }
+        }
+    }
+    st.log("erreur", format!("Échec du rangement de « {} » : {last_err}", it.nom));
+    st.history.add(Entry { id: format!("e-{}", exec::unique_id()), t: now(), nom: it.nom.clone(), titre, categorie: cat, action: Action::from_str(&input.action), vers: vers.clone(), fichiers: vec![], dossiers_crees: vec![], taille_totale: 0, statut: "erreur".into(), motif: last_err });
+}
+
+async fn after_success(st: &S, cfg: &Config, it: &Item, cat: Option<Category>) {
+    let sec = Secrets::load(&cfg.data_dir);
+    if let Some(cat) = cat {
+        if let Some(root) = cfg.destinations.get(&cat) {
+            for (ok, msg) in notify::refresh(cfg, &sec, cat, root).await {
+                st.log(if ok { "info" } else { "erreur" }, msg);
+            }
+        }
+    }
+    let titre = it.reconnu.as_ref().map(|r| r.titre.as_str()).unwrap_or(&it.nom);
+    if let Err(e) = notify::home_assistant(cfg, &sec, "Nouveau média rangé", titre).await {
+        st.log("erreur", format!("Home Assistant : {e}"));
+    }
+}
+
+async fn api_history(State(st): State<S>) -> R<Value> {
+    let mut v = st.history.all();
+    v.reverse();
+    Ok(Json(json!({ "entrees": v })))
+}
+
+#[derive(Deserialize)]
+struct UndoReq {
+    id: String,
+}
+
+async fn api_undo(State(st): State<S>, Json(req): Json<UndoReq>) -> R<Value> {
+    let e = st.history.get(&req.id).ok_or_else(|| bad("rangement introuvable"))?;
+    let e2 = e.clone();
+    tokio::task::spawn_blocking(move || exec::undo(&e2)).await.map_err(err500)?.map_err(|er| bad(er))?;
+    st.history.set_status(&req.id, "annule", "annulé à la demande");
+    st.log("info", format!("Annulé : « {} »", e.nom));
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn api_services_test(State(st): State<S>) -> R<Value> {
+    let cfg = st.cfg.read().await.clone();
+    let sec = Secrets::load(&cfg.data_dir);
+    Ok(Json(notify::test_all(&cfg, &sec).await))
 }

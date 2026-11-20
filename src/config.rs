@@ -69,6 +69,18 @@ pub struct Config {
     pub tmdb_key_file: String,
     #[serde(default)]
     pub integrations: Integrations,
+    /// Mode essai à blanc : l'appli analyse et propose, mais n'écrit rien. ACTIVÉ PAR DÉFAUT.
+    #[serde(default = "d_true")]
+    pub essai: bool,
+    /// Méthode de copie : auto (reflink → lien physique → copie), reflink, hardlink ou copy.
+    #[serde(default)]
+    pub copy_method: crate::exec::Method,
+    /// Analyse automatique toutes les N minutes (0 = seulement à la demande).
+    #[serde(default)]
+    pub scan_interval_min: u64,
+    /// Après chaque analyse, range seul ce qui est sûr (ignoré en mode essai).
+    #[serde(default)]
+    pub auto_range: bool,
     #[serde(default = "d_data")]
     pub data_dir: PathBuf,
     #[serde(default)]
@@ -89,6 +101,12 @@ pub struct Integrations {
     pub jellyfin_url: String,
     #[serde(default)]
     pub ha_url: String,
+    /// Service de notification Home Assistant, ex. « notify.mobile_app_mon_iphone » (vide = pas de notification).
+    #[serde(default)]
+    pub ha_service: String,
+    /// Forcer la bibliothèque Plex d'une catégorie (numéro de section) si la détection par nom de dossier ne suffit pas.
+    #[serde(default)]
+    pub plex_sections: BTreeMap<Category, String>,
 }
 
 /// Secrets saisis dans l'interface : fichier à part, lisible par le seul propriétaire.
@@ -120,6 +138,9 @@ impl Secrets {
     }
 }
 
+fn d_true() -> bool {
+    true
+}
 fn d_lang() -> String {
     "fr-FR".into()
 }

@@ -77,6 +77,8 @@ pub enum Decision {
     Attendre { raison: String },
     /// Rien à faire (fichier parasite…).
     Ignorer { raison: String },
+    /// Déjà rangé pendant cette session.
+    Fait { vers: PathBuf },
 }
 
 #[derive(Debug, Clone, Serialize)]

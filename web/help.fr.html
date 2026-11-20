@@ -80,9 +80,28 @@
 
 <h3 id="historique">Onglet « Historique »</h3>
 <p>Chaque rangement réel y est inscrit : avant → après, catégorie, taille, motif, avec un bouton <b>Annuler</b>. En essai à blanc, il reste vide puisque rien n'est exécuté.</p>
+<ul><li><b>Annuler</b> retire ce que l'appli a créé dans la bibliothèque (et les dossiers qu'elle avait créés, s'ils sont vides). L'original dans le dossier d'arrivée n'est pas touché. L'annulation est refusée si un fichier rangé a été modifié depuis.</li>
+<li>Un rangement en <b>Erreur</b> n'a rien laissé à moitié fait. L'appli réessaie 3 fois pour une panne passagère ; ensuite, le bouton <b>Réessayer</b> relance.</li></ul>
 
 <h3 id="bibliotheque">Onglet « Bibliothèque »</h3>
 <p>Ce que l'appli a compris de vos dossiers existants : titre lu, année, saisons trouvées. Les lignes marquées « ? » n'ont aucune saison détectée : c'est souvent un film rangé par erreur dans les séries, ou un dossier vide. Cette lecture sert à retrouver le bon dossier pour ajouter une saison et à repérer les doublons.</p>
+
+<h3 id="fonctionnement">Fonctionnement (réglages avancés)</h3>
+<ul>
+<li><b>Mode essai à blanc</b> : voir la section dédiée. Quand vous le décochez, l'appli demande une confirmation, puis les boutons « Ranger » deviennent actifs.</li>
+<li><b>Méthode de copie</b> : voir <a href="#" data-help="methode">ci-dessous</a>.</li>
+<li><b>Analyse automatique</b> : voir <a href="#" data-help="auto">Analyse et rangement automatiques</a>.</li>
+</ul>
+
+<h3 id="methode">Méthode de copie</h3>
+<ul>
+<li><b>Automatique</b> (conseillé) : essaie d'abord le <b>reflink</b> (copie instantanée sans place en plus, sur Btrfs ou XFS), puis le <b>lien physique</b> (même fichier à deux noms, sans place en plus, même volume obligatoire), puis la <b>copie normale</b>.</li>
+<li><b>Reflink / Lien physique / Copie seulement</b> : pour imposer une méthode. Si elle est impossible, le rangement échoue avec un message clair, sans rien laisser derrière.</li>
+</ul>
+<div class="note">Avec un lien physique, supprimer le fichier d'un côté ne supprime pas l'autre : le contenu n'est effacé que quand les deux noms ont disparu. L'annulation d'un rangement ne retire que le nom créé dans la bibliothèque.</div>
+
+<h3 id="auto">Analyse et rangement automatiques</h3>
+<p><b>Analyse automatique toutes les N minutes</b> : l'appli regarde seule les dossiers d'arrivée (0 = seulement quand vous cliquez). <b>Ranger seul ce qui est sûr</b> : après chaque analyse, les éléments « À ranger » sont rangés sans bouton. Les doublons, les doutes et les transferts en cours ne sont jamais rangés seuls. Ignoré tant que l'essai à blanc est actif.</p>
 
 <h3 id="services">Plex, Jellyfin, Home Assistant</h3>
 <p>Après un rangement, l'appli pourra prévenir vos lecteurs pour qu'ils rafraîchissent <b>seulement le dossier concerné</b>.</p>
