@@ -167,6 +167,19 @@ impl Tmdb {
         Ok(out)
     }
 
+    /// Numéros de saison (hors épisodes spéciaux) d'une série TMDB.
+    pub async fn tv_seasons(&self, id: u64) -> Result<Vec<u16>> {
+        let v = self.get(&format!("/tv/{id}"), &[("language", &self.language)]).await?;
+        Ok(v["seasons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| s["season_number"].as_u64())
+            .filter(|n| *n > 0)
+            .map(|n| n as u16)
+            .collect())
+    }
+
     /// Cherche une release et classe les candidats, du meilleur au moins bon.
     pub async fn identify(&self, rel: &Release) -> Result<Vec<Candidate>> {
         let query = rel.title.clone();

@@ -60,7 +60,13 @@ pub struct Reconnu {
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum Decision {
     /// Sera rangé : `vers` est le chemin final.
-    Ranger { vers: PathBuf, nouveau_dossier: bool },
+    Ranger {
+        vers: PathBuf,
+        nouveau_dossier: bool,
+        /// Saison du nom d'origine → saison de la fiche TMDB (ex. S02 → S01 pour « Nordholm 2 »).
+        renumerotation: Option<(u16, u16)>,
+        renommages: Vec<Renommage>,
+    },
     /// Déjà présent.
     Doublon { existant: PathBuf, raison: String },
     /// Doute : à valider à la main.
@@ -128,6 +134,34 @@ pub fn safe_name(s: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Remplace le numéro de saison `from` par `to` dans un nom (S02E01 → S01E01, S02 → S01).
+pub fn renumber_season(name: &str, from: u16, to: u16) -> String {
+    let re = regex::Regex::new(&format!(r"(?i)(^|[^A-Za-z0-9])S0*{from}(E\d|[^A-Za-z0-9]|$)")).unwrap();
+    // deux passes : des occurrences voisines (« S02.S02 ») se chevauchent sur le séparateur
+    let once = |t: &str| re.replace_all(t, |c: &regex::Captures| format!("{}S{:02}{}", &c[1], to, &c[2])).to_string();
+    once(&once(name))
+}
+
+/// Un renommage prévu, relatif au dossier de la release.
+#[derive(Debug, Clone, Serialize)]
+pub struct Renommage {
+    pub ancien: String,
+    pub nouveau: String,
+}
+
+/// Liste des fichiers vidéo à renommer dans un dossier de release (chemins relatifs).
+fn renames_for(dir: &Path, from: u16, to: u16) -> Vec<Renommage> {
+    let mut out = Vec::new();
+    for e in WalkDir::new(dir).min_depth(1).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()) {
+        let rel = e.path().strip_prefix(dir).unwrap_or(e.path()).to_string_lossy().to_string();
+        let nouveau = renumber_season(&rel, from, to);
+        if nouveau != rel {
+            out.push(Renommage { ancien: rel, nouveau });
+        }
+    }
+    out
 }
 
 pub struct Planner<'a> {
@@ -260,30 +294,74 @@ impl<'a> Planner<'a> {
                 let raison = if rel.quality_score() > *q + 2 { "déjà présent (la nouvelle version est de meilleure qualité)" } else { "déjà présent" };
                 return Decision::Doublon { existant: p.clone(), raison: raison.into() };
             }
-            return Decision::Ranger { vers: dest_root.join(&item.nom), nouveau_dossier: false };
+            return Decision::Ranger { vers: dest_root.join(&item.nom), nouveau_dossier: false, renumerotation: None, renommages: vec![] };
         }
 
-        // Série
+        // Série. Une fiche TMDB qui n'a qu'une saison (téléfilms numérotés, « Nordholm 2 ») alors que la release
+        // annonce S02, S03… : on garde la fiche et on renumérote en S01.
+        let mut renum: Option<(u16, u16)> = None;
+        if let [n] = rel.seasons.as_slice() {
+            if *n > 1 {
+                match self.tmdb.tv_seasons(c.id).await {
+                    Ok(list) if !list.contains(n) => {
+                        if list == [1] {
+                            renum = Some((*n, 1));
+                        } else {
+                            return Decision::ATrier { raison: format!("la fiche TMDB n'a pas de saison {n} (saisons : {list:?})"), propositions: props };
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => return Decision::ATrier { raison: format!("TMDB : {e}"), propositions: props },
+                }
+            }
+        }
+        let seasons: Vec<u16> = match renum {
+            Some((_, to)) => vec![to],
+            None => rel.seasons.clone(),
+        };
+        let (final_name, renommages) = match renum {
+            Some((from, to)) => (renumber_season(&item.nom, from, to), renames_for(&item.source, from, to)),
+            None => (item.nom.clone(), vec![]),
+        };
         match self.find_series(&names, c.year.or(rel.year)) {
             Some(lib) => {
-                if !rel.seasons.is_empty() && rel.episodes.is_empty() && rel.seasons.iter().all(|s| lib.seasons.contains(s)) {
-                    return Decision::Doublon { existant: lib.path.clone(), raison: format!("saison(s) {:?} déjà présente(s)", rel.seasons) };
+                if !seasons.is_empty() && rel.episodes.is_empty() && seasons.iter().all(|s| lib.seasons.contains(s)) {
+                    return Decision::Doublon { existant: lib.path.clone(), raison: format!("saison(s) {seasons:?} déjà présente(s)") };
                 }
-                if !rel.episodes.is_empty() && rel.seasons.len() == 1 && rel.episodes.iter().all(|e| lib.episodes.contains(&(rel.seasons[0], *e))) {
+                if !rel.episodes.is_empty() && seasons.len() == 1 && rel.episodes.iter().all(|e| lib.episodes.contains(&(seasons[0], *e))) {
                     return Decision::Doublon { existant: lib.path.clone(), raison: "épisode déjà présent".into() };
                 }
-                if rel.seasons.is_empty() && rel.complete && !lib.seasons.is_empty() {
+                if seasons.is_empty() && rel.complete && !lib.seasons.is_empty() {
                     return Decision::ATrier { raison: format!("intégrale reçue, mais la série existe déjà (saisons {:?})", lib.seasons.iter().collect::<Vec<_>>()), propositions: vec![lib.path.display().to_string()] };
                 }
-                Decision::Ranger { vers: lib.path.join(&item.nom), nouveau_dossier: false }
+                Decision::Ranger { vers: lib.path.join(&final_name), nouveau_dossier: false, renumerotation: renum, renommages }
             }
             None => {
                 let dir = match c.year {
                     Some(y) => format!("{} ({y})", safe_name(&c.title)),
                     None => safe_name(&c.title),
                 };
-                Decision::Ranger { vers: dest_root.join(dir).join(&item.nom), nouveau_dossier: true }
+                Decision::Ranger { vers: dest_root.join(dir).join(&final_name), nouveau_dossier: true, renumerotation: renum, renommages }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renumerotation_des_noms() {
+        assert_eq!(
+            renumber_season("Meurtres.à.Nordholm.S02E01.Une.famille.disparue.FRENCH-55H.mkv", 2, 1),
+            "Meurtres.à.Nordholm.S01E01.Une.famille.disparue.FRENCH-55H.mkv"
+        );
+        assert_eq!(renumber_season("Meurtres.à.Nordholm.S02.FRENCH.1080p-55H", 2, 1), "Meurtres.à.Nordholm.S01.FRENCH.1080p-55H");
+        // dossier/fichier : les deux numéros changent
+        assert_eq!(renumber_season("Show.S02/Show.S02E02.mkv", 2, 1), "Show.S01/Show.S01E02.mkv");
+        // pas de faux positif
+        assert_eq!(renumber_season("Show.S20E01.mkv", 2, 1), "Show.S20E01.mkv");
+        assert_eq!(renumber_season("Les.S2.Aventures.S03E01.mkv", 3, 1), "Les.S2.Aventures.S01E01.mkv");
     }
 }

@@ -30,8 +30,22 @@ fn bigrams(s: &str) -> Vec<(char, char)> {
     c.windows(2).map(|w| (w[0], w[1])).collect()
 }
 
+/// Les nombres entiers du titre (« Nordholm 2 » → ["2"]). Deux titres qui n'ont pas les mêmes nombres
+/// sont deux œuvres différentes (suites, numéros), même s'ils se ressemblent presque lettre pour lettre.
+fn numbers(s: &str) -> Vec<String> {
+    key(s).split(' ').filter(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_digit())).map(String::from).collect()
+}
+
 /// Ressemblance entre deux titres, de 0 (rien à voir) à 1 (identiques après normalisation).
 pub fn similarity(a: &str, b: &str) -> f32 {
+    let s = raw_similarity(a, b);
+    if s < 1.0 && numbers(a) != numbers(b) {
+        return s.min(0.5);
+    }
+    s
+}
+
+fn raw_similarity(a: &str, b: &str) -> f32 {
     let (ca, cb) = (compact(a), compact(b));
     if ca.is_empty() || cb.is_empty() {
         return 0.0;
@@ -66,6 +80,13 @@ mod tests {
         assert_eq!(compact("working.girls"), compact("Working Girls"));
         assert!(similarity("workingirls", "Working Girls") > 0.85);
     }
+    #[test]
+    fn les_chiffres_comptent() {
+        assert!(similarity("Meurtres à Nordholm 2", "Meurtres à Nordholm 1") <= 0.5);
+        assert!(similarity("21 Jump Street", "22 Jump Street") <= 0.5);
+        assert_eq!(similarity("Paris Police 1905", "paris police 1905"), 1.0);
+    }
+
     #[test]
     fn ressemblance() {
         assert_eq!(similarity("Bureau des légendes", "bureau des legendes"), 1.0);

@@ -68,7 +68,13 @@ async fn main() -> anyhow::Result<()> {
                         println!("    reconnu : {rec}");
                     }
                     match &it.decision {
-                        plan::Decision::Ranger { vers, nouveau_dossier } => println!("    RANGER{} → {}", if *nouveau_dossier { " (nouveau dossier)" } else { "" }, vers.display()),
+                        plan::Decision::Ranger { vers, nouveau_dossier, renumerotation, renommages } => {
+                            println!("    RANGER{} → {}", if *nouveau_dossier { " (nouveau dossier)" } else { "" }, vers.display());
+                            if let Some((a, b)) = renumerotation {
+                                println!("    RENUMÉROTATION S{a:02} → S{b:02} (la fiche TMDB n'a que la saison {b})");
+                                for r in renommages { println!("       {}  →  {}", r.ancien, r.nouveau); }
+                            }
+                        }
                         plan::Decision::Doublon { existant, raison } => println!("    DOUBLON : {raison} → {}", existant.display()),
                         plan::Decision::ATrier { raison, propositions } => {
                             println!("    À TRIER : {raison}");
