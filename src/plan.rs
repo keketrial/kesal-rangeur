@@ -95,6 +95,7 @@ pub struct Item {
 }
 
 /// Index des films déjà rangés (pour les doublons).
+#[derive(Clone)]
 pub struct MovieIndex {
     pub entries: Vec<(String, Option<u16>, u32, PathBuf)>, // titre, année, qualité, chemin
 }
@@ -180,13 +181,15 @@ pub struct Choice {
     pub category: Option<Category>,
 }
 
+/// Clé d'un choix retenu : titre + année + (pour une saison seule) le numéro de saison. Sans la saison, un choix
+/// fait pour « Nordholm S01 » s'appliquerait aussi à S02, S03 et S04, qui sont d'autres fiches.
 pub fn choice_key(rel: &Release) -> String {
-    format!(
-        "{}|{}|{}",
-        norm::key(&rel.title),
-        rel.year.map(|y| y.to_string()).unwrap_or_default(),
-        if rel.is_series_like() { "tv" } else { "any" }
-    )
+    let kind = match rel.seasons.as_slice() {
+        [s] => format!("tv:S{s}"),
+        _ if rel.is_series_like() => "tv".to_string(),
+        _ => "any".to_string(),
+    };
+    format!("{}|{}|{}", norm::key(&rel.title), rel.year.map(|y| y.to_string()).unwrap_or_default(), kind)
 }
 
 pub struct Planner {
@@ -219,6 +222,20 @@ impl Planner {
         let choices = std::fs::read_to_string(&choices_path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
         let movies = MovieIndex::scan(&roots);
         Planner { cfg, tmdb, movies, series, choices: Mutex::new(choices), choices_path }
+    }
+
+    /// Même bibliothèques déjà lues, autres réglages (sert aux essais de configuration : pas de nouvelle lecture du NAS).
+    pub fn variant(&self, cfg: Arc<Config>, tmdb: Arc<Tmdb>, rescan_films: bool) -> Planner {
+        let movies = if rescan_films {
+            let mut roots: Vec<PathBuf> = cfg.film_libraries.clone();
+            if let Some(d) = cfg.destinations.get(&Category::Film) {
+                roots.push(d.clone());
+            }
+            MovieIndex::scan(&roots)
+        } else {
+            self.movies.clone()
+        };
+        Planner { choices_path: self.choices_path.clone(), choices: Mutex::new(self.choices.lock().unwrap().clone()), series: self.series.clone(), movies, cfg, tmdb }
     }
 
     pub fn movie_count(&self) -> usize {
@@ -421,6 +438,16 @@ impl Planner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn choix_retenu_distingue_les_saisons() {
+        let a = parser::parse("Meurtres.à.Nordholm.S01.FRENCH.1080p-X");
+        let b = parser::parse("Meurtres.à.Nordholm.S02.FRENCH.1080p-X");
+        let film = parser::parse("Verity.2026.MULTi.1080p-X.mkv");
+        assert_ne!(choice_key(&a), choice_key(&b));
+        assert_eq!(choice_key(&a), choice_key(&parser::parse("Meurtres.à.Nordholm.S01.MULTi.720p-Y")));
+        assert!(choice_key(&film).ends_with("|any"));
+    }
 
     #[test]
     fn renumerotation_des_noms() {
