@@ -26,7 +26,12 @@ const TABS = [
   ["accueil", "tab_home"], ["plan", "tab_plan"], ["trier", "tab_sort"], ["historique", "tab_history"],
   ["bibliotheque", "tab_library"], ["reglages", "tab_settings"], ["journal", "tab_log"], ["apropos", "tab_about"],
 ];
+const VIEWS = {}; // rempli plus bas : id → fonction qui dessine l'onglet
+const dirty = new Set(); // onglets à redessiner la prochaine fois qu'on les ouvre
+const scrollOf = {};
+function invalidate(...ids) { (ids.length ? ids : Object.keys(VIEWS)).forEach((i) => dirty.add(i)); }
 function route() {
+  scrollOf[S.view] = window.scrollY;
   const v = (location.hash || "#/accueil").replace("#/", "").split("?")[0];
   S.view = TABS.some((x) => x[0] === v) ? v : "accueil";
   render();
@@ -39,7 +44,11 @@ function renderTabs() {
     `<a href="#/${id}" class="${S.view === id ? "on" : ""}">${t(k)}${badge[id] ? `<span class="n">${badge[id]}</span>` : ""}</a>`).join("");
 }
 async function refreshStatus() {
-  try { S.status = await api("/api/status"); } catch (e) { return; }
+  let fresh; try { fresh = await api("/api/status"); } catch (e) { return; }
+  const sig = (x) => x && JSON.stringify([x.compteurs, x.essai, x.tmdb_ok, x.entrees, x.destinations, x.plex, x.jellyfin, x.dernier_scan, x.erreur, x.films_connus, x.choix_retenus]);
+  const changed = sig(fresh) !== sig(S.status);
+  S.status = fresh;
+  if (changed) { invalidate("accueil", "plan", "trier"); if (S.status && document.getElementById("v-" + S.view) && ["accueil", "plan", "trier"].includes(S.view) && !S._busyRender) { S._busyRender = true; render().finally(() => { S._busyRender = false; }); } }
   const st = S.status;
   $("#pill").textContent = st.scanning ? t("pill_busy") : (st.essai ? t("pill_dry") : (st.en_cours ? "Rangement…" : "Mode réel"));
   $("#pill").className = "pill" + (st.scanning || !st.essai ? " busy" : "");
@@ -51,17 +60,37 @@ let wasScanning = false;
 async function tick() {
   await refreshStatus();
   const sc = S.status && S.status.scanning;
-  if (wasScanning && !sc) { await loadPlan(); toast(S.status.erreur ? "Analyse impossible : " + S.status.erreur : "Analyse terminée"); render(); }
+  if (wasScanning && !sc) { await loadPlan(); invalidate("accueil", "plan", "trier", "bibliotheque", "historique"); toast(S.status.erreur ? "Analyse impossible : " + S.status.erreur : "Analyse terminée"); render(); }
   wasScanning = !!sc;
 }
 async function loadPlan() { try { S.items = (await api("/api/plan")).items; } catch (e) { S.items = []; } }
 
+function pane(id) {
+  let el = document.getElementById("v-" + id);
+  if (!el) { el = document.createElement("section"); el.id = "v-" + id; el.hidden = true; $("#view").appendChild(el); }
+  return el;
+}
+/** Affiche l'onglet courant. Les autres restent en mémoire (cachés) : pas de reconstruction, pas de flash des affiches. */
 async function render() {
   renderTabs();
-  const v = $("#view");
-  const fn = { accueil: vHome, plan: vPlan, trier: vSort, historique: vHistory, bibliotheque: vLibrary, reglages: vSettings, journal: vLog, apropos: vAbout }[S.view];
-  await fn(v);
-  window.scrollTo(0, 0);
+  const id = S.view, el = pane(id);
+  if (dirty.has(id) || !el.dataset.done) {
+    dirty.delete(id);
+    el.dataset.done = "1";
+    await VIEWS[id](el);
+  }
+  document.querySelectorAll("#view > section").forEach((x) => { x.hidden = x !== el; });
+  window.scrollTo(0, scrollOf[id] || 0);
+  if (id === "journal") vLog(el); // le journal se rafraîchit à chaque visite
+}
+/** Prépare les autres onglets en arrière-plan pour que le changement d'onglet soit instantané. */
+async function prewarm() {
+  for (const id of Object.keys(VIEWS)) {
+    if (id === S.view || id === "reglages") continue;
+    const el = pane(id);
+    if (!el.dataset.done) { el.dataset.done = "1"; dirty.delete(id); try { await VIEWS[id](el); } catch (e) {} }
+    await new Promise((r) => setTimeout(r, 60));
+  }
 }
 
 // ---------- Accueil ----------
@@ -89,7 +118,7 @@ function vHome(v) {
     <div class="chips"><span class="tag ${st.tmdb_ok ? "ok" : "warn"}">TMDB ${st.tmdb_ok ? "connecté" : "non configuré"}</span>
       <span class="tag ${st.plex ? "ok" : ""}">Plex ${st.plex ? "configuré" : "non configuré"}</span>
       <span class="tag ${st.jellyfin ? "ok" : ""}">Jellyfin ${st.jellyfin ? "configuré" : "non configuré"}</span></div>`;
-  v.querySelectorAll("[data-filter]").forEach((a) => a.addEventListener("click", () => { S.filter = a.dataset.filter; }));
+  v.querySelectorAll("[data-filter]").forEach((a) => a.addEventListener("click", () => { if (S.filter !== a.dataset.filter) { S.filter = a.dataset.filter; invalidate("plan"); } }));
 }
 
 // ---------- En attente (plan) ----------
@@ -128,7 +157,7 @@ function itemCard(it, opts = {}) {
 function bindRun(root) {
   root.querySelectorAll("[data-run]").forEach((b) => b.addEventListener("click", async () => {
     b.disabled = true;
-    try { await api("/api/run", { method: "POST", body: { nom: b.dataset.run } }); toast("Rangement lancé…"); setTimeout(async () => { await loadPlan(); await refreshStatus(); render(); }, 2500); }
+    try { await api("/api/run", { method: "POST", body: { nom: b.dataset.run } }); toast("Rangement lancé…"); setTimeout(async () => { await loadPlan(); invalidate("accueil", "plan", "trier", "historique"); await refreshStatus(); render(); }, 2500); }
     catch (e) { toast(e.message); b.disabled = false; }
   }));
 }
@@ -150,7 +179,7 @@ async function vPlan(v) {
   if (ra) ra.onclick = async () => {
     if (!confirm(`Ranger les ${list.length} élément(s) « À ranger » ? Chaque rangement pourra être annulé depuis l'Historique.`)) return;
     ra.disabled = true;
-    try { await api("/api/run", { method: "POST", body: {} }); toast("Rangement lancé…"); setTimeout(async () => { await loadPlan(); await refreshStatus(); render(); }, 3000); } catch (e) { toast(e.message); ra.disabled = false; }
+    try { await api("/api/run", { method: "POST", body: {} }); toast("Rangement lancé…"); setTimeout(async () => { await loadPlan(); invalidate("accueil", "plan", "trier", "historique"); await refreshStatus(); render(); }, 3000); } catch (e) { toast(e.message); ra.disabled = false; }
   };
 }
 
@@ -178,7 +207,7 @@ function bindPick(root) {
     try {
       await api("/api/choice", { method: "POST", body: { nom: b.dataset.pick, tmdb_id: +b.dataset.id, media: b.dataset.media, category: b.dataset.cat } });
       toast("Choix retenu : l'appli s'en souviendra"); $("#dlgSearch").close();
-      await loadPlan(); await refreshStatus(); render();
+      await loadPlan(); invalidate("accueil", "plan", "trier"); await refreshStatus(); render();
     } catch (e) { toast("Erreur : " + e.message); b.disabled = false; }
   }));
 }
@@ -221,7 +250,7 @@ async function vHistory(v) {
       ${e.statut === "erreur" && real && !resolved(e) ? `<button class="btn small" data-run="${esc(e.nom)}">Réessayer</button>` : ""}</div></div>`).join("")}`;
   v.querySelectorAll("[data-undo]").forEach((b) => b.addEventListener("click", async () => {
     if (!confirm("Annuler ce rangement ? Les fichiers rangés par l'appli seront retirés de la bibliothèque. L'original dans le dossier d'arrivée n'est pas touché.")) return;
-    try { await api("/api/undo", { method: "POST", body: { id: b.dataset.undo } }); toast("Rangement annulé"); vHistory(v); } catch (e) { toast("Annulation refusée : " + e.message); }
+    try { await api("/api/undo", { method: "POST", body: { id: b.dataset.undo } }); toast("Rangement annulé"); invalidate("accueil", "plan"); vHistory(v); } catch (e) { toast("Annulation refusée : " + e.message); }
   }));
   bindRun(v);
 }
@@ -243,7 +272,10 @@ async function vLibrary(v) {
       <td>${r.saisons.length ? r.saisons.join(", ") : (r.integrale ? "intégrale" : `<span class="tag warn">?</span>`)}</td><td>${r.videos}</td></tr>`).join("")}</tbody></table></div>`;
   }
   v.innerHTML = html;
-  $("#libq").addEventListener("input", (e) => { S.libq = e.target.value; clearTimeout(S.lt); S.lt = setTimeout(() => vLibrary(v), 250); });
+  const box = $("#libq");
+  if (S.libFocus) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+  box.addEventListener("input", (e) => { S.libq = e.target.value; S.libFocus = true; clearTimeout(S.lt); S.lt = setTimeout(() => vLibrary(v), 200); });
+  box.addEventListener("blur", () => { S.libFocus = false; });
 }
 
 // ---------- Réglages ----------
@@ -355,7 +387,7 @@ async function save(quiet) {
     tmdb_key: $("#s_tmdb").value, plex_token: $("#s_plextok").value, jellyfin_key: $("#s_jftok").value, ha_token: $("#s_hatok").value };
   if (S.status && S.status.essai && !body.essai &&
       !confirm("Vous allez DÉSACTIVER l'essai à blanc.\n\nÀ partir de maintenant, « Ranger » copiera réellement dans votre bibliothèque (chaque rangement reste annulable depuis l'Historique).\n\nContinuer ?")) { $("#s_essai").checked = true; return; }
-  try { await api("/api/settings", { method: "POST", body }); if (!quiet) toast(t("saved")); await refreshStatus(); if (!quiet) vSettings($("#view")); }
+  try { await api("/api/settings", { method: "POST", body }); if (!quiet) toast(t("saved")); invalidate("accueil", "plan", "trier", "historique", "bibliotheque"); await refreshStatus(); if (!quiet) vSettings(pane("reglages")); }
   catch (e) { toast("Erreur : " + e.message); }
 }
 
@@ -409,6 +441,8 @@ async function openHelp(anchor) {
 }
 function scrollHelp(id) { const el = $("#helpBody").querySelector("#" + CSS.escape(id)); if (el) $("#helpBody").scrollTo({ top: el.offsetTop - 8 }); }
 
+Object.assign(VIEWS, { accueil: vHome, plan: vPlan, trier: vSort, historique: vHistory, bibliotheque: vLibrary, reglages: vSettings, journal: vLog, apropos: vAbout });
+
 // ---------- démarrage ----------
 document.addEventListener("click", (e) => {
   const h = e.target.closest("[data-help]"); if (h) { e.preventDefault(); openHelp(h.dataset.help); }
@@ -419,4 +453,4 @@ $("#btnScan").onclick = async () => {
   try { await api("/api/scan", { method: "POST" }); wasScanning = true; await refreshStatus(); } catch (e) { toast("Erreur : " + e.message); }
 };
 window.addEventListener("hashchange", route);
-(async () => { await refreshStatus(); await loadPlan(); route(); setInterval(tick, 2000); })();
+(async () => { await refreshStatus(); await loadPlan(); route(); setInterval(tick, 2000); setTimeout(prewarm, 400); })();
