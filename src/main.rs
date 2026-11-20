@@ -1,6 +1,7 @@
 mod config;
 mod exec;
 mod library;
+mod naming;
 mod notify;
 mod norm;
 mod parser;
@@ -93,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
                         println!("    reconnu : {rec}");
                     }
                     match &it.decision {
-                        plan::Decision::Ranger { vers, nouveau_dossier, renumerotation, renommages } => {
+                        plan::Decision::Ranger { vers, nouveau_dossier, renumerotation, renommages, .. } => {
                             println!("    RANGER{} → {}", if *nouveau_dossier { " (nouveau dossier)" } else { "" }, vers.display());
                             if let Some((a, b)) = renumerotation {
                                 println!("    RENUMÉROTATION S{a:02} → S{b:02} (la fiche TMDB n'a que la saison {b})");
@@ -152,6 +153,19 @@ async fn matrix(cfg_path: &str) -> anyhow::Result<()> {
     cases.push(("8 aucun dossier de films supplémentaire (doublons : film_recent seulement)".into(), Box::new(|c| c.film_libraries.clear()), "", true));
     cases.push(("9 langue espagnol (es-ES)".into(), Box::new(|c| c.language = "es-ES".into()), "es-ES", false));
     cases.push(("10 langue anglais (en-US)".into(), Box::new(|c| c.language = "en-US".into()), "en-US", false));
+    cases.push(("12 nommage FileBot".into(), Box::new(|c| c.naming.preset = naming::Preset::Filebot), "", false));
+    cases.push(("13 nommage Plex".into(), Box::new(|c| c.naming.preset = naming::Preset::Plex), "", false));
+    cases.push(("14 nommage perso : film « {ny} [{vf}] », épisode « {s00e00} {t} », saison « S{s} »".into(), Box::new(|c| {
+        c.naming.preset = naming::Preset::Custom;
+        c.naming.movie = "{ny} [{vf}]".into();
+        c.naming.episode = "{s00e00} {t}".into();
+        c.naming.season_folder = "S{s}".into();
+    }), "", false));
+    cases.push(("15 nommage perso INVALIDE (variable inconnue)".into(), Box::new(|c| {
+        c.naming.preset = naming::Preset::Custom;
+        c.naming.movie = "{zzz}".into();
+        c.naming.episode = "{n}".into();
+    }), "", false));
     cases.push(("11 dossier d'arrivée inexistant + dossier valide".into(), Box::new(|c| {
         let mut bad = c.inputs[0].clone();
         bad.path = "/mnt/nas/telechargement/n_existe_pas".into();
@@ -179,7 +193,11 @@ async fn matrix(cfg_path: &str) -> anyhow::Result<()> {
         let mut now_map = std::collections::BTreeMap::new();
         for it in &items {
             let desc = match &it.decision {
-                plan::Decision::Ranger { vers, .. } => { r += 1; format!("RANGER → {}", vers.display().to_string().replace("/mnt/nas/", "")) }
+                plan::Decision::Ranger { vers, fichiers, .. } => {
+                    r += 1;
+                    let ex = fichiers.first().map(|f| format!("   ⇒ {}", f.dst.strip_prefix(vers).map(|p| p.display().to_string()).unwrap_or_else(|_| f.dst.display().to_string()))).unwrap_or_default();
+                    format!("RANGER → {}{ex}", vers.display().to_string().replace("/mnt/nas/", ""))
+                }
                 plan::Decision::Doublon { raison, .. } => { d += 1; format!("DOUBLON ({raison})") }
                 plan::Decision::ATrier { raison, .. } => { a += 1; format!("À TRIER ({raison})") }
                 plan::Decision::Attendre { .. } => { w += 1; "ATTENDRE".to_string() }
@@ -195,7 +213,7 @@ async fn matrix(cfg_path: &str) -> anyhow::Result<()> {
         } else {
             let mut shown = 0;
             for (k, v) in &now_map {
-                if reference.get(k) != Some(v) && shown < 18 {
+                if reference.get(k) != Some(v) && shown < 40 {
                     println!("      {k:<34} → {v}");
                     shown += 1;
                 }

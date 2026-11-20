@@ -69,6 +69,9 @@ pub struct Config {
     pub tmdb_key_file: String,
     #[serde(default)]
     pub integrations: Integrations,
+    /// Nommage des fichiers rangés (par défaut : noms d'origine conservés).
+    #[serde(default)]
+    pub naming: crate::naming::Naming,
     /// Mode essai à blanc : l'appli analyse et propose, mais n'écrit rien. ACTIVÉ PAR DÉFAUT.
     #[serde(default = "d_true")]
     pub essai: bool,

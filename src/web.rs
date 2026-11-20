@@ -2,6 +2,7 @@
 
 use crate::config::{Category, Config, Input, Rule, Secrets};
 use crate::exec::{self, Action, Entry, History};
+use crate::naming::{self, Naming};
 use crate::notify;
 use crate::library::LibEntry;
 use crate::plan::{Choice, Decision, Item, Planner};
@@ -116,6 +117,7 @@ pub async fn serve(cfg_path: PathBuf, bind: String) -> anyhow::Result<()> {
         .route("/api/history", get(api_history))
         .route("/api/undo", post(api_undo))
         .route("/api/services/test", post(api_services_test))
+        .route("/api/naming/preview", post(api_naming_preview))
         .with_state(st.clone());
     // Analyse périodique (si réglée) : rien n'est écrit tant que l'essai à blanc est actif.
     tokio::spawn(scheduler(st.clone()));
@@ -129,6 +131,7 @@ pub fn default_config() -> Config {
         language: "fr-FR".into(),
         tmdb_key_file: String::new(),
         integrations: Default::default(),
+        naming: Default::default(),
         essai: true,
         copy_method: Default::default(),
         scan_interval_min: 0,
@@ -344,6 +347,8 @@ struct SettingsIn {
     copy_method: exec::Method,
     scan_interval_min: u64,
     auto_range: bool,
+    #[serde(default)]
+    naming: Naming,
     /// Secrets : vides = inchangés.
     #[serde(default)]
     tmdb_key: String,
@@ -381,6 +386,7 @@ async fn api_settings_get(State(st): State<S>) -> R<Value> {
         "jellyfin_url": cfg.integrations.jellyfin_url,
         "ha_url": cfg.integrations.ha_url,
         "ha_service": cfg.integrations.ha_service,
+        "naming": cfg.naming,
         "essai": cfg.essai,
         "copy_method": cfg.copy_method,
         "scan_interval_min": cfg.scan_interval_min,
@@ -392,7 +398,11 @@ async fn api_settings_get(State(st): State<S>) -> R<Value> {
 }
 
 async fn api_settings_set(State(st): State<S>, Json(s): Json<SettingsIn>) -> R<Value> {
+    if let Some(f) = s.naming.formats() {
+        naming::preview(&f).map_err(|e| bad(format!("format de nom invalide : {e}")))?;
+    }
     let mut cfg = st.cfg.write().await;
+    cfg.naming = s.naming.clone();
     cfg.language = s.language;
     cfg.inputs = s.inputs;
     cfg.destinations = s.destinations;
@@ -571,7 +581,8 @@ async fn run_one(st: &S, it: &Item) {
     if cfg.essai {
         return; // double sécurité
     }
-    let Decision::Ranger { vers, renommages, .. } = &it.decision else { return };
+    let Decision::Ranger { vers, renommages, fichiers: placements, .. } = &it.decision else { return };
+    let plan: Vec<(PathBuf, PathBuf)> = placements.iter().map(|p| (p.src.clone(), p.dst.clone())).collect();
     let Some(input) = cfg.inputs.iter().find(|i| i.path == it.entree).cloned() else { return };
     let (titre, cat) = it.reconnu.as_ref().map(|r| (r.titre.clone(), Some(r.categorie))).unwrap_or((it.nom.clone(), None));
     // Délais entre les essais (secondes). KESAL_RETRY_DELAYS="0,1,1" sert aux tests.
@@ -582,9 +593,10 @@ async fn run_one(st: &S, it: &Item) {
             st.log("info", format!("Nouvel essai dans {d} s pour « {} »…", it.nom));
             tokio::time::sleep(std::time::Duration::from_secs(*d)).await;
         }
+        let plan2 = plan.clone();
         let (src, dst, ren, nom, titre2, action, method, settle) = (it.source.clone(), vers.clone(), renommages.clone(), it.nom.clone(), titre.clone(), Action::from_str(&input.action), cfg.copy_method, input.settle_minutes);
         let res = tokio::task::spawn_blocking(move || {
-            exec::execute(&exec::Request { nom: &nom, titre: &titre2, categorie: cat, source: &src, vers: &dst, renommages: &ren, action, method, settle_minutes: settle })
+            exec::execute(&exec::Request { nom: &nom, titre: &titre2, categorie: cat, source: &src, vers: &dst, renommages: &ren, action, method, settle_minutes: settle, plan: &plan2 })
         })
         .await;
         match res {
@@ -613,7 +625,7 @@ async fn run_one(st: &S, it: &Item) {
         }
     }
     st.log("erreur", format!("Échec du rangement de « {} » : {last_err}", it.nom));
-    st.history.add(Entry { id: format!("e-{}", exec::unique_id()), t: now(), nom: it.nom.clone(), titre, categorie: cat, action: Action::from_str(&input.action), vers: vers.clone(), fichiers: vec![], dossiers_crees: vec![], taille_totale: 0, statut: "erreur".into(), motif: last_err });
+    st.history.add(Entry { id: format!("e-{}", exec::unique_id()), t: now(), nom: it.nom.clone(), titre, categorie: cat, action: Action::from_str(&input.action), vers: vers.clone(), fichiers: vec![], dossiers_crees: vec![], taille_totale: 0, plan: false, statut: "erreur".into(), motif: last_err });
 }
 
 async fn after_success(st: &S, cfg: &Config, it: &Item, cat: Option<Category>) {
@@ -655,4 +667,20 @@ async fn api_services_test(State(st): State<S>) -> R<Value> {
     let cfg = st.cfg.read().await.clone();
     let sec = Secrets::load(&cfg.data_dir);
     Ok(Json(notify::test_all(&cfg, &sec).await))
+}
+
+#[derive(Deserialize)]
+struct PreviewReq {
+    naming: Naming,
+}
+
+/// Aperçu en direct des formats de nom (Réglages).
+async fn api_naming_preview(Json(r): Json<PreviewReq>) -> R<Value> {
+    match r.naming.formats() {
+        None => Ok(Json(json!({"ok": true, "garde": true}))),
+        Some(f) => match naming::preview(&f) {
+            Ok((film, serie)) => Ok(Json(json!({"ok": true, "garde": false, "film": film, "serie": serie}))),
+            Err(e) => Ok(Json(json!({"ok": false, "erreur": e}))),
+        },
+    }
 }

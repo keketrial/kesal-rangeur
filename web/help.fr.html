@@ -63,6 +63,25 @@
   <li>Quand TMDB a <b>une fiche par saison</b> (téléfilms numérotés comme « Meurtres à Nordholm 1, 2, 3, 4 »), un dossier est créé par fiche et les épisodes sont renumérotés en S01, pour que Plex et Jellyfin les retrouvent.</li>
 </ul>
 
+<h3 id="nommage">Noms des fichiers (comme FileBot)</h3>
+<p>Par défaut, l'appli <b>garde les noms d'origine</b> des releases. Vous pouvez lui faire renommer et organiser les fichiers à la manière de FileBot, avec <b>l'aperçu avant → après</b> dans l'onglet « En attente » (clic sur « fichier(s) renommé(s) »).</p>
+<ul>
+<li><b>FileBot</b> : reprend les exemples de la documentation de FileBot : film <code>Avatar (2009).mkv</code>, épisode <code>Dark Angel - S03E01 - Labyrinthe.mkv</code> (dans le dossier de la série).</li>
+<li><b>Plex</b> : un dossier par film (<code>Avatar (2009)/Avatar (2009).mkv</code>), un dossier par saison dans la série (<code>Season 01/</code>). Si la série existe déjà avec un autre style (<code>S01</code>, <code>Saison_01</code>, <code>Season 1</code>…), c'est <b>ce style qui est suivi</b>.</li>
+<li><b>Personnalisé</b> : vos propres formats avec les variables de FileBot.</li>
+</ul>
+<h4>Variables</h4>
+<p><code>{n}</code> titre (dans votre langue) · <code>{y}</code> année · <code>{ny}</code> « Titre (année) » · <code>{s}</code> / <code>{s00}</code> saison (1 / 01) · <code>{e}</code> / <code>{e00}</code> épisode · <code>{s00e00}</code> S01E01 · <code>{sxe}</code> 1x01 · <code>{t}</code> titre de l'épisode · <code>{vf}</code> 1080p · <code>{source}</code> · <code>{vc}</code> codec · <code>{group}</code> équipe. Un <code>/</code> crée un dossier.</p>
+<ul>
+<li>Un fichier de plusieurs épisodes donne <code>S01E01-E02</code> et les deux titres reliés par « &amp; ».</li>
+<li>Si TMDB n'a pas de titre pour un épisode, il est simplement omis (pas de tiret orphelin).</li>
+<li>Les caractères interdits (<code>: / \ * ? " &lt; &gt; |</code>) sont remplacés.</li>
+<li>Seuls les <b>vidéos et sous-titres</b> sont rangés ; les autres fichiers (nfo, images…) sont ignorés. Les sous-titres gardent leur langue (<code>.fr.srt</code>).</li>
+<li>Si l'appli n'arrive pas à identifier un épisode dans le nom d'un fichier, ou si un dossier de film contient plusieurs grosses vidéos, l'élément va dans <b>À trier</b> au lieu d'être renommé au hasard.</li>
+<li>Le <b>dossier d'une série déjà présente est toujours réutilisé tel quel</b> ; le format « nouveau dossier de série » ne sert que pour une série nouvelle.</li>
+</ul>
+<div class="note">Le nommage s'applique à la copie : l'original garde son nom d'origine dans le dossier d'arrivée (Resilio n'est pas perturbé).</div>
+
 <h3 id="doublons">Doublons</h3>
 <p>Un film est identifié par son titre et son année, un épisode par la série + SxxEyy. Si l'élément est déjà dans votre bibliothèque, il apparaît dans <b>Doublons</b> et n'est pas repris. Si la nouvelle version est de meilleure qualité, la raison l'indique.</p>
 <p>Pour que les anciens films soient pris en compte, ajoutez leurs dossiers dans « Films déjà présents ailleurs » (par exemple un dossier d'archives).</p>

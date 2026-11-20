@@ -135,8 +135,10 @@ function itemCard(it, opts = {}) {
     case "ranger":
       tags.unshift(r && r.media === "movie" ? `<span class="tag ok">Sera rangé</span>` : `<span class="tag ok">${d.nouveau_dossier ? "Nouveau dossier" : "Dossier de la série existant"}</span>`);
       detail = `<span class="path mono" title="${esc(d.vers)}">→ ${esc(short(d.vers, 90))}</span>`;
-      if (d.renumerotation) {
-        detail += `<details class="ren"><summary>Renumérotation S${String(d.renumerotation[0]).padStart(2, "0")} → S${String(d.renumerotation[1]).padStart(2, "0")} (${d.renommages.length} fichier(s))</summary>${d.renommages.map((x) => `<div class="mono">${esc(x.ancien.split("/").pop())}<br>→ ${esc(x.nouveau.split("/").pop())}</div>`).join("")}</details>`;
+      if (d.renommages.length) {
+        const renum = d.renumerotation ? `Renumérotation S${String(d.renumerotation[0]).padStart(2, "0")} → S${String(d.renumerotation[1]).padStart(2, "0")} · ` : "";
+        const named = d.fichiers && d.fichiers.length;
+        detail += `<details class="ren"><summary>${renum}${d.renommages.length} fichier(s) ${named ? "renommé(s)" : "modifié(s)"} — voir l'aperçu</summary>${d.renommages.map((x) => `<div class="mono">${esc(named ? x.ancien : x.ancien.split("/").pop())}<br>→ ${esc(named ? x.nouveau : x.nouveau.split("/").pop())}</div>`).join("")}</details>`;
       }
       break;
     case "doublon": tags.unshift(`<span class="tag dup">Doublon</span>`); detail = `<span class="path">${esc(d.raison)} — <span class="mono">${esc(short(d.existant, 80))}</span></span>`; break;
@@ -302,6 +304,17 @@ async function vSettings(v) {
     <p class="muted" style="margin-top:0">Exemple : « Pékin Express » → télé / téléréalité. Une règle l'emporte sur la devinette de TMDB.</p><div id="rules"></div>
     <button class="btn small" id="addRule" type="button">+ Ajouter une règle</button></div>
 
+  <div class="card"><h3 style="margin-top:0">Noms des fichiers (comme FileBot) ${helpBtn("nommage")}</h3>
+    <label class="field"><span>Format</span><select id="n_preset">
+      ${[["keep", "Garder les noms d'origine (par défaut)"], ["filebot", "FileBot : Titre (année) · Série - S01E01 - Titre de l'épisode"], ["plex", "Plex : un dossier par film, dossiers de saison"], ["custom", "Personnalisé…"]].map(([k, n]) => `<option value="${k}" ${s.naming.preset === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+    <div id="n_custom" ${s.naming.preset === "custom" ? "" : "hidden"}>
+      <div class="two"><label class="field"><span>Film</span><input id="n_movie" class="mono" value="${esc(s.naming.movie)}"></label>
+        <label class="field"><span>Épisode</span><input id="n_episode" class="mono" value="${esc(s.naming.episode)}"></label></div>
+      <div class="two"><label class="field"><span>Dossier de saison (« auto » = style déjà présent ; vide = aucun)</span><input id="n_season" class="mono" value="${esc(s.naming.season_folder)}"></label>
+        <label class="field"><span>Nouveau dossier de série</span><input id="n_series" class="mono" value="${esc(s.naming.series_folder)}"></label></div>
+      <p class="muted" style="margin-top:0">Variables : <code>{n}</code> titre, <code>{y}</code> année, <code>{ny}</code> titre (année), <code>{s}</code> <code>{s00}</code> saison, <code>{e}</code> <code>{e00}</code> épisode, <code>{s00e00}</code> S01E01, <code>{sxe}</code> 1x01, <code>{t}</code> titre de l'épisode, <code>{vf}</code> 1080p, <code>{source}</code>, <code>{vc}</code>, <code>{group}</code>. Un « / » crée un dossier.</p></div>
+    <div id="n_prev" class="card" style="background:var(--bg);margin:0"></div></div>
+
   <div class="card"><h3 style="margin-top:0">Fonctionnement ${helpBtn("fonctionnement")}</h3>
     <label class="field" style="display:flex;gap:10px;align-items:flex-start"><input id="s_essai" type="checkbox" style="width:auto;min-height:0;margin-top:4px" ${s.essai ? "checked" : ""}>
       <span style="display:block"><b>Mode essai à blanc</b> ${helpBtn("essai")}<br><span class="muted" style="font-weight:400">Coché : l'appli analyse et propose, mais n'écrit rien. Décochez seulement quand vous avez validé le résultat.</span></span></label>
@@ -322,6 +335,18 @@ async function vSettings(v) {
     <button class="btn" id="b_svctest" type="button">Tester les services</button> <span id="svcres" class="muted"></span></div>
   <div class="save-bar"><span class="muted" id="saveInfo"></span><button class="btn primary" id="saveBtn" type="button">${t("save")}</button></div>`;
   drawInputs(); drawFilmLibs(); drawRules();
+  const namingNow = () => ({ preset: $("#n_preset").value, movie: $("#n_movie").value, episode: $("#n_episode").value, season_folder: $("#n_season").value, series_folder: $("#n_series").value });
+  let npT; const nPrev = async () => {
+    $("#n_custom").hidden = $("#n_preset").value !== "custom";
+    try {
+      const r = await api("/api/naming/preview", { method: "POST", body: { naming: namingNow() } });
+      $("#n_prev").innerHTML = r.garde ? `<span class="muted">Les fichiers gardent le nom de la release.</span>`
+        : r.ok ? `<b>Aperçu</b><div class="mono" style="margin-top:6px">🎬 ${esc(r.film)}</div><div class="mono" style="margin-top:4px">📺 ${esc(r.serie)}</div>`
+        : `<span style="color:var(--bad)">⚠️ ${esc(r.erreur)}</span>`;
+    } catch (e) { $("#n_prev").textContent = e.message; }
+  };
+  ["n_preset", "n_movie", "n_episode", "n_season", "n_series"].forEach((id) => $("#" + id).addEventListener("input", () => { clearTimeout(npT); npT = setTimeout(nPrev, 200); }));
+  nPrev();
   $("#addInput").onclick = () => { collect(); s.inputs.push({ path: "", mode: "auto", action: "copy", settle_minutes: 30 }); drawInputs(); };
   $("#addFilmLib").onclick = () => { collect(); s.film_libraries.push(""); drawFilmLibs(); };
   $("#addRule").onclick = () => { collect(); s.rules.push({ title: "", category: "telerealite" }); drawRules(); };
@@ -383,6 +408,7 @@ async function save(quiet) {
   collect(); const s = S.settings;
   const body = { language: s.language, inputs: s.inputs.filter((i) => i.path), destinations: s.destinations, film_libraries: s.film_libraries, rules: s.rules,
     plex_url: $("#s_plexurl").value, jellyfin_url: $("#s_jfurl").value, ha_url: $("#s_haurl").value, ha_service: $("#s_haserv").value,
+    naming: { preset: $("#n_preset").value, movie: $("#n_movie").value, episode: $("#n_episode").value, season_folder: $("#n_season").value, series_folder: $("#n_series").value },
     essai: $("#s_essai").checked, copy_method: $("#s_method").value, scan_interval_min: Math.max(0, +$("#s_interval").value || 0), auto_range: $("#s_auto").checked,
     tmdb_key: $("#s_tmdb").value, plex_token: $("#s_plextok").value, jellyfin_key: $("#s_jftok").value, ha_token: $("#s_hatok").value };
   if (S.status && S.status.essai && !body.essai &&

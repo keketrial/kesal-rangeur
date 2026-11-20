@@ -14,6 +14,7 @@ Why? Sonarr and Radarr rely on TheTVDB, which often returns English titles. `kes
 - **Identifies with TMDB** in your language and picks the category from genres (Animation, Documentary, Reality, Talk…). Custom rules supported.
 - **Finds the existing series folder** (even under a different name) and adds the season; otherwise creates "Title (year)". Same-title remakes are told apart by year.
 - Handles shows where **TMDB has one entry per season** and renumbers episodes so Plex and Jellyfin match them.
+- **FileBot-style naming (optional)**: same variables (`{n} {y} {s00e00} {t}`…), FileBot and Plex presets, TMDB episode titles, before → after preview. Off by default (original names kept).
 - **Duplicate detection** (movie: title + year; episode: series + SxxEyy).
 - **No extra disk space**: reflink (Btrfs/XFS), else hard link, else plain copy. The original stays in place.
 - **When in doubt → "To sort"**: TMDB candidates with posters, you pick, it remembers.

@@ -57,6 +57,9 @@ pub struct Entry {
     /// Dossiers créés par ce rangement (pour les retirer à l'annulation, s'ils sont vides).
     pub dossiers_crees: Vec<PathBuf>,
     pub taille_totale: u64,
+    /// Rangement avec noms/dossiers calculés (nommage activé) : à l'annulation, on ne retire que les dossiers créés.
+    #[serde(default)]
+    pub plan: bool,
     /// « fait », « annule » ou « erreur »
     pub statut: String,
     pub motif: String,
@@ -192,10 +195,15 @@ pub struct Request<'a> {
     pub action: Action,
     pub method: Method,
     pub settle_minutes: u64,
+    /// Correspondance exacte fichier d'origine → fichier final (nommage activé). Vide : on garde les noms d'origine.
+    pub plan: &'a [(PathBuf, PathBuf)],
 }
 
 /// Range un élément. En cas d'échec, rien n'est laissé à moitié fait et l'original n'est jamais touché.
 pub fn execute(r: &Request) -> Result<Entry, ExecError> {
+    if !r.plan.is_empty() {
+        return execute_plan(r);
+    }
     if !r.source.exists() {
         return Err(ExecError::SourceAbsente(r.source.to_path_buf()));
     }
@@ -310,9 +318,112 @@ pub fn execute(r: &Request) -> Result<Entry, ExecError> {
         fichiers,
         dossiers_crees: created,
         taille_totale: total,
+        plan: false,
         statut: "fait".into(),
         motif: String::new(),
     })
+}
+
+fn nearest_existing(p: &Path) -> PathBuf {
+    let mut cur = p;
+    while !cur.exists() {
+        match cur.parent() {
+            Some(x) => cur = x,
+            None => break,
+        }
+    }
+    cur.to_path_buf()
+}
+
+/// Rangement avec chemins calculés : chaque fichier est copié dans un dossier provisoire, vérifié, puis mis en place.
+/// En cas d'échec à n'importe quel moment, tout ce qui a été placé est retiré.
+fn execute_plan(r: &Request) -> Result<Entry, ExecError> {
+    for (src, _) in r.plan {
+        if !src.exists() {
+            return Err(ExecError::SourceAbsente(src.clone()));
+        }
+    }
+    match check_settled(r.source, r.settle_minutes) {
+        Settle::Pret => {}
+        Settle::Transfert { fichier } => return Err(ExecError::PasPret(format!("transfert en cours ({fichier})"))),
+        Settle::Attente { minutes } => return Err(ExecError::PasPret(format!("modifié récemment, encore {minutes} min"))),
+    }
+    let mut seen = std::collections::HashSet::new();
+    for (_, dst) in r.plan {
+        if dst.exists() {
+            return Err(ExecError::Existe(dst.clone()));
+        }
+        if !seen.insert(dst.clone()) {
+            return Err(ExecError::Io(format!("deux fichiers vont au même endroit : {}", dst.display())));
+        }
+        if dst.starts_with(r.source) && r.source.is_dir() {
+            return Err(ExecError::Io("destination et origine se chevauchent".into()));
+        }
+    }
+    let id = unique_id();
+    let anchor = nearest_existing(r.vers);
+    let anchor = if anchor.is_dir() { anchor } else { anchor.parent().map(|p| p.to_path_buf()).unwrap_or(anchor) };
+    let staging_root = anchor.join(format!(".kesal-en-cours-{id}"));
+    let mut fichiers: Vec<Fichier> = Vec::new();
+    let mut staged: Vec<PathBuf> = Vec::new();
+    let mut created: Vec<PathBuf> = Vec::new();
+    let mut placed: Vec<PathBuf> = Vec::new();
+
+    let result: Result<(), ExecError> = (|| {
+        fs::create_dir_all(&staging_root).map_err(|e| io_err("dossier provisoire", e))?;
+        for (i, (src, dst)) in r.plan.iter().enumerate() {
+            let tmp = staging_root.join(i.to_string());
+            let m = place_file(src, &tmp, r.method)?;
+            let taille = fs::metadata(src).map(|m| m.len()).unwrap_or(0);
+            fichiers.push(Fichier { src: src.clone(), dst: dst.clone(), taille, methode: m.into() });
+            staged.push(tmp);
+        }
+        for (f, tmp) in fichiers.iter().zip(&staged) {
+            let got = fs::metadata(tmp).map(|m| m.len()).map_err(|e| ExecError::Verification(format!("{} : {e}", f.dst.display())))?;
+            if got != f.taille {
+                return Err(ExecError::Verification(format!("{} : {got} octets au lieu de {}", f.dst.display(), f.taille)));
+            }
+            if fs::metadata(&f.src).map(|m| m.len()).unwrap_or(0) != f.taille {
+                return Err(ExecError::Verification(format!("{} a changé pendant la copie", f.src.display())));
+            }
+        }
+        for (f, tmp) in fichiers.iter().zip(&staged) {
+            let parent = f.dst.parent().ok_or_else(|| ExecError::Io("destination sans dossier".into()))?;
+            created.extend(first_missing_ancestors(parent));
+            fs::create_dir_all(parent).map_err(|e| io_err(&format!("création de {}", parent.display()), e))?;
+            if f.dst.exists() {
+                return Err(ExecError::Existe(f.dst.clone()));
+            }
+            fs::rename(tmp, &f.dst).map_err(|e| io_err("mise en place finale", e))?;
+            placed.push(f.dst.clone());
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        for p in &placed {
+            let _ = fs::remove_file(p);
+        }
+        let _ = fs::remove_dir_all(&staging_root); // uniquement notre dossier provisoire
+        for d in created.iter().rev() {
+            let _ = fs::remove_dir(d); // seulement s'il est vide
+        }
+        return Err(e);
+    }
+    let _ = fs::remove_dir(&staging_root);
+    if r.action == Action::Move {
+        for f in &fichiers {
+            let _ = fs::remove_file(&f.src);
+        }
+        if r.source.is_dir() {
+            let mut dirs: Vec<PathBuf> = WalkDir::new(r.source).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_dir()).map(|e| e.into_path()).collect();
+            dirs.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
+            for d in dirs {
+                let _ = fs::remove_dir(&d);
+            }
+        }
+    }
+    let total = fichiers.iter().map(|f| f.taille).sum();
+    Ok(Entry { id, t: now(), nom: r.nom.to_string(), titre: r.titre.to_string(), categorie: r.categorie, action: r.action, vers: r.vers.to_path_buf(), fichiers, dossiers_crees: created, taille_totale: total, plan: true, statut: "fait".into(), motif: String::new() })
 }
 
 /// Annule un rangement : retire ce qui a été créé (et remet l'original pour un déplacement).
@@ -347,7 +458,7 @@ pub fn undo(e: &Entry) -> Result<(), ExecError> {
         fs::remove_file(&f.dst).map_err(|er| io_err(&format!("suppression de {}", f.dst.display()), er))?;
     }
     // dossiers vides, du plus profond au plus haut ; puis ceux qu'on avait créés
-    if e.vers.is_dir() {
+    if !e.plan && e.vers.is_dir() {
         let mut dirs: Vec<PathBuf> = WalkDir::new(&e.vers).into_iter().filter_map(|x| x.ok()).filter(|x| x.file_type().is_dir()).map(|x| x.into_path()).collect();
         dirs.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
         for d in dirs {
@@ -427,7 +538,7 @@ mod tests {
         }
     }
     fn req<'a>(src: &'a Path, vers: &'a Path, ren: &'a [Renommage], action: Action, method: Method) -> Request<'a> {
-        Request { nom: "x", titre: "X", categorie: Some(Category::Serie), source: src, vers, renommages: ren, action, method, settle_minutes: 30 }
+        Request { nom: "x", titre: "X", categorie: Some(Category::Serie), source: src, vers, renommages: ren, action, method, settle_minutes: 30, plan: &[] }
     }
 
     #[test]
@@ -624,6 +735,82 @@ mod tests {
         h.add(b);
         assert_eq!(h.get(&idb).unwrap().vers, t.path().join("out2/b.mkv"));
         assert_eq!(h.get(&ida).unwrap().vers, t.path().join("out2/a.mkv"));
+    }
+
+    fn plan_req<'a>(src: &'a Path, base: &'a Path, plan: &'a [(PathBuf, PathBuf)], action: Action) -> Request<'a> {
+        Request { nom: "x", titre: "X", categorie: Some(Category::Serie), source: src, vers: base, renommages: &[], action, method: Method::Auto, settle_minutes: 30, plan }
+    }
+
+    #[test]
+    fn plan_dossiers_de_saison_et_annulation_prudente() {
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("in/Show.S01.FRENCH-X");
+        mk(&src.join("Show.S01E01.mkv"), "ep un");
+        mk(&src.join("Show.S01E02.mkv"), "ep deux");
+        age_dir(&t.path().join("in"));
+        // la série existe déjà, avec un dossier vide à l'utilisateur
+        let base = t.path().join("series/Show (2020)");
+        fs::create_dir_all(base.join("Saison_00 vide")).unwrap();
+        let plan = vec![
+            (src.join("Show.S01E01.mkv"), base.join("Season 01/Show - S01E01 - Un.mkv")),
+            (src.join("Show.S01E02.mkv"), base.join("Season 01/Show - S01E02 - Deux.mkv")),
+        ];
+        let e = execute(&plan_req(&src, &base, &plan, Action::Copy)).unwrap();
+        assert_eq!(fs::read_to_string(base.join("Season 01/Show - S01E02 - Deux.mkv")).unwrap(), "ep deux");
+        assert!(src.join("Show.S01E01.mkv").exists(), "originaux intacts");
+        assert!(e.plan);
+        assert!(!fs::read_dir(&base).unwrap().any(|x| x.unwrap().file_name().to_string_lossy().starts_with(".kesal")), "pas de reste provisoire");
+        undo(&e).unwrap();
+        assert!(!base.join("Season 01").exists(), "dossier de saison créé par l'appli : retiré");
+        assert!(base.join("Saison_00 vide").exists(), "dossier vide de l'utilisateur : conservé");
+        assert!(base.exists(), "dossier de série existant : conservé");
+        assert_eq!(fs::read_to_string(src.join("Show.S01E01.mkv")).unwrap(), "ep un");
+    }
+
+    #[test]
+    fn plan_panne_a_mi_chemin_retire_tout() {
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("in/Show.S01");
+        mk(&src.join("a.mkv"), "a");
+        mk(&src.join("b.mkv"), "b");
+        age_dir(&t.path().join("in"));
+        let base = t.path().join("series/Show");
+        let ro = base.join("Season 02");
+        fs::create_dir_all(&ro).unwrap();
+        fs::set_permissions(&ro, fs::Permissions::from_mode(0o555)).unwrap();
+        let plan = vec![(src.join("a.mkv"), base.join("Season 01/a.mkv")), (src.join("b.mkv"), ro.join("b.mkv"))];
+        let r = execute(&plan_req(&src, &base, &plan, Action::Copy));
+        fs::set_permissions(&ro, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(r.is_err());
+        assert!(!base.join("Season 01").exists(), "le 1er fichier, déjà placé, a été retiré avec son dossier");
+        assert_eq!(fs::read_dir(&base).unwrap().count(), 1, "il ne reste que le dossier à l'utilisateur : {:?}", fs::read_dir(&base).unwrap().map(|x| x.unwrap().file_name()).collect::<Vec<_>>());
+        assert!(src.join("a.mkv").exists() && src.join("b.mkv").exists());
+    }
+
+    #[test]
+    fn plan_destination_existante_refusee() {
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("in/f.mkv");
+        mk(&src, "nouveau");
+        let dst = t.path().join("films/F (2020)/F (2020).mkv");
+        mk(&dst, "ancien");
+        let r = execute(&plan_req(&src, &t.path().join("films/F (2020)"), &[(src.clone(), dst.clone())], Action::Copy));
+        assert!(matches!(r, Err(ExecError::Existe(_))));
+        assert_eq!(fs::read_to_string(&dst).unwrap(), "ancien");
+    }
+
+    #[test]
+    fn plan_film_dossier_cree_puis_deplacer_et_annuler() {
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("in/Film.2020.1080p-X.mkv");
+        mk(&src, "film");
+        fs::create_dir_all(t.path().join("films")).unwrap();
+        let dst = t.path().join("films/Film (2020)/Film (2020).mkv");
+        let base = t.path().join("films/Film (2020)");
+        let e = execute(&plan_req(&src, &base, &[(src.clone(), dst.clone())], Action::Move)).unwrap();
+        assert!(dst.exists() && !src.exists(), "déplacé");
+        undo(&e).unwrap();
+        assert!(src.exists() && !dst.exists() && !base.exists(), "remis à l'origine, dossier créé retiré");
     }
 
     #[test]

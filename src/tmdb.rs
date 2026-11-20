@@ -196,6 +196,19 @@ impl Tmdb {
         self.get("/configuration", &[]).await.map(|_| ())
     }
 
+    /// Titres des épisodes d'une saison (dans la langue choisie). Les titres génériques (« Épisode 3 ») sont ignorés.
+    pub async fn season_titles(&self, id: u64, season: u16) -> Result<HashMap<u16, String>> {
+        let v = self.get(&format!("/tv/{id}/season/{season}"), &[("language", &self.language)]).await?;
+        let generic = regex::Regex::new(r"(?i)^(épisode|episode|episodio|folge|aflevering|capítulo|capitulo)\s*\d+$").unwrap();
+        Ok(v["episodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| Some((e["episode_number"].as_u64()? as u16, e["name"].as_str()?.trim().to_string())))
+            .filter(|(_, n)| !n.is_empty() && !generic.is_match(n))
+            .collect())
+    }
+
     /// Numéros de saison (hors épisodes spéciaux) d'une série TMDB.
     pub async fn tv_seasons(&self, id: u64) -> Result<Vec<u16>> {
         let v = self.get(&format!("/tv/{id}"), &[("language", &self.language)]).await?;

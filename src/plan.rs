@@ -4,6 +4,7 @@ use crate::config::{Category, Config, Input};
 use crate::library::{self, LibEntry};
 use crate::parser::{self, Release};
 use crate::tmdb::{self, Candidate, Media, Tmdb};
+use crate::naming::{self, Formats};
 use crate::norm;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -68,6 +69,8 @@ pub enum Decision {
         /// Saison du nom d'origine → saison de la fiche TMDB (ex. S02 → S01 pour « Nordholm 2 »).
         renumerotation: Option<(u16, u16)>,
         renommages: Vec<Renommage>,
+        /// Chemins exacts (nommage activé) ; vide = noms d'origine conservés.
+        fichiers: Vec<Placement>,
     },
     /// Déjà présent.
     Doublon { existant: PathBuf, raison: String },
@@ -151,6 +154,32 @@ pub fn renumber_season(name: &str, from: u16, to: u16) -> String {
     // deux passes : des occurrences voisines (« S02.S02 ») se chevauchent sur le séparateur
     let once = |t: &str| re.replace_all(t, |c: &regex::Captures| format!("{}S{:02}{}", &c[1], to, &c[2])).to_string();
     once(&once(name))
+}
+
+/// Un fichier à ranger : d'où il vient, où il ira (chemins complets). Rempli seulement si le nommage est activé.
+#[derive(Debug, Clone, Serialize)]
+pub struct Placement {
+    pub src: PathBuf,
+    pub dst: PathBuf,
+}
+
+/// Fichiers d'un élément (chemins relatifs et tailles). Un fichier seul donne son propre nom.
+fn list_files(source: &Path) -> Vec<(PathBuf, u64)> {
+    if source.is_file() {
+        let sz = std::fs::metadata(source).map(|m| m.len()).unwrap_or(0);
+        return vec![(PathBuf::from(source.file_name().unwrap_or_default()), sz)];
+    }
+    WalkDir::new(source)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file() && !library::is_junk_name(&e.file_name().to_string_lossy()))
+        .map(|e| (e.path().strip_prefix(source).unwrap_or(e.path()).to_path_buf(), e.metadata().map(|m| m.len()).unwrap_or(0)))
+        .collect()
+}
+
+fn abs_src(source: &Path, rel: &Path) -> PathBuf {
+    if source.is_file() { source.to_path_buf() } else { source.join(rel) }
 }
 
 /// Un renommage prévu, relatif au dossier de la release.
@@ -329,6 +358,59 @@ impl Planner {
         item
     }
 
+    /// Film : nom et dossier calculés d'après le format choisi.
+    fn name_movie(&self, item: &Item, c: &Candidate, fmt: &Formats, dest_root: &Path, props: &[String]) -> Decision {
+        let files = list_files(&item.source);
+        let (map, _ignored) = match naming::map_movie(&files, fmt, &c.title, c.year, &item.release) {
+            Ok(x) => x,
+            Err(e) => return Decision::ATrier { raison: format!("nommage impossible : {e}"), propositions: props.to_vec() },
+        };
+        let fichiers: Vec<Placement> = map.iter().map(|(rel, dst_rel)| Placement { src: abs_src(&item.source, rel), dst: dest_root.join(dst_rel) }).collect();
+        if fichiers.iter().all(|f| f.dst.exists()) {
+            return Decision::Doublon { existant: fichiers[0].dst.clone(), raison: "déjà présent (même nom)".into() };
+        }
+        if let Some(f) = fichiers.iter().find(|f| f.dst.exists()) {
+            return Decision::ATrier { raison: format!("un fichier existe déjà : {}", f.dst.display()), propositions: props.to_vec() };
+        }
+        let first = map[0].1.components().next().map(|c| c.as_os_str().to_owned()).unwrap_or_default();
+        let vers = if map[0].1.components().count() > 1 { dest_root.join(first) } else { fichiers[0].dst.clone() };
+        let renommages = map.iter().map(|(rel, dst)| Renommage { ancien: rel.to_string_lossy().to_string(), nouveau: dst.to_string_lossy().to_string() }).collect();
+        Decision::Ranger { vers, nouveau_dossier: false, renumerotation: None, renommages, fichiers }
+    }
+
+    /// Série : chaque épisode est placé dans son dossier de saison avec son nouveau nom (titres d'épisodes TMDB).
+    #[allow(clippy::too_many_arguments)]
+    async fn name_series(&self, item: &Item, c: &Candidate, fmt: &Formats, base: PathBuf, nouveau: bool, renum: Option<(u16, u16)>, existing_style: Option<String>, props: &[String]) -> Decision {
+        let files: Vec<PathBuf> = list_files(&item.source).into_iter().map(|(p, _)| p).collect();
+        // saisons dont on a besoin (après renumérotation) pour récupérer les titres d'épisodes
+        let hint = if let [s] = item.release.seasons.as_slice() { Some(*s) } else { None };
+        let mut wanted = std::collections::BTreeSet::new();
+        for f in &files {
+            if let Some((s0, _)) = naming::episode_of(f, hint) {
+                wanted.insert(match renum { Some((from, to)) if from == s0 => to, _ => s0 });
+            }
+        }
+        let mut titles: std::collections::HashMap<u16, std::collections::HashMap<u16, String>> = Default::default();
+        for s in wanted {
+            if let Ok(t) = self.tmdb.season_titles(c.id, s).await {
+                titles.insert(s, t);
+            }
+        }
+        let (map, _ignored) = match naming::map_series(&files, &naming::SeriesIn { fmt, name: &c.title, year: c.year, release: &item.release, renum, existing_style, titles: &titles }) {
+            Ok(x) => x,
+            Err(e) => return Decision::ATrier { raison: format!("nommage impossible : {e}"), propositions: props.to_vec() },
+        };
+        let fichiers: Vec<Placement> = map.iter().map(|(rel, dst_rel)| Placement { src: abs_src(&item.source, rel), dst: base.join(dst_rel) }).collect();
+        if fichiers.iter().all(|f| f.dst.exists()) {
+            return Decision::Doublon { existant: base, raison: "tous les épisodes existent déjà (même nom)".into() };
+        }
+        if let Some(f) = fichiers.iter().find(|f| f.dst.exists()) {
+            return Decision::ATrier { raison: format!("un fichier existe déjà : {}", f.dst.display()), propositions: props.to_vec() };
+        }
+        let renommages = map.iter().map(|(rel, dst)| Renommage { ancien: rel.to_string_lossy().to_string(), nouveau: dst.to_string_lossy().to_string() }).collect();
+        Decision::Ranger { vers: base, nouveau_dossier: nouveau, renumerotation: renum, renommages, fichiers }
+    }
+
     async fn decide(&self, item: &mut Item, input: &Input) -> Decision {
         let rel = item.release.clone();
         if rel.title.is_empty() {
@@ -382,7 +464,10 @@ impl Planner {
                 let raison = if rel.quality_score() > *q + 2 { "déjà présent (la nouvelle version est de meilleure qualité)" } else { "déjà présent" };
                 return Decision::Doublon { existant: p.clone(), raison: raison.into() };
             }
-            return Decision::Ranger { vers: dest_root.join(&item.nom), nouveau_dossier: false, renumerotation: None, renommages: vec![] };
+            if let Some(fmt) = self.cfg.naming.formats() {
+                return self.name_movie(item, c, &fmt, dest_root, &props);
+            }
+            return Decision::Ranger { vers: dest_root.join(&item.nom), nouveau_dossier: false, renumerotation: None, renommages: vec![], fichiers: vec![] };
         }
 
         // Série. Une fiche TMDB qui n'a qu'une saison (téléfilms numérotés, « Nordholm 2 ») alors que la release
@@ -422,14 +507,22 @@ impl Planner {
                 if seasons.is_empty() && rel.complete && !lib.seasons.is_empty() {
                     return Decision::ATrier { raison: format!("intégrale reçue, mais la série existe déjà (saisons {:?})", lib.seasons.iter().collect::<Vec<_>>()), propositions: vec![lib.path.display().to_string()] };
                 }
-                Decision::Ranger { vers: lib.path.join(&final_name), nouveau_dossier: false, renumerotation: renum, renommages }
+                if let Some(fmt) = self.cfg.naming.formats() {
+                    return self.name_series(item, c, &fmt, lib.path.clone(), false, renum, Some(naming::detect_season_style(&lib.path)).flatten(), &props).await;
+                }
+                Decision::Ranger { vers: lib.path.join(&final_name), nouveau_dossier: false, renumerotation: renum, renommages, fichiers: vec![] }
             }
             None => {
                 let dir = match c.year {
                     Some(y) => format!("{} ({y})", safe_name(&c.title)),
                     None => safe_name(&c.title),
                 };
-                Decision::Ranger { vers: dest_root.join(dir).join(&final_name), nouveau_dossier: true, renumerotation: renum, renommages }
+                if let Some(fmt) = self.cfg.naming.formats() {
+                    let ctx = naming::Ctx { n: c.title.clone(), y: c.year, ..Default::default() };
+                    let folder = naming::render(&fmt.series_folder, &ctx).map(|v| v.join(" ")).unwrap_or(dir.clone());
+                    return self.name_series(item, c, &fmt, dest_root.join(folder), true, renum, None, &props).await;
+                }
+                Decision::Ranger { vers: dest_root.join(dir).join(&final_name), nouveau_dossier: true, renumerotation: renum, renommages, fichiers: vec![] }
             }
         }
     }

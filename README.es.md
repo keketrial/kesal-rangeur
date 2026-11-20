@@ -14,6 +14,7 @@
 - **Identifica con TMDB** en tu idioma y deduce la categoría por los géneros (Animación, Documental, Reality, Talk…). Admite reglas personales.
 - **Encuentra la carpeta de serie existente** (aunque tenga otro nombre) y añade la temporada; si no, crea « Título (año) ». Los remakes con el mismo título se distinguen por el año.
 - Maneja series con **una ficha de TMDB por temporada** y renumera los episodios para que Plex y Jellyfin los reconozcan.
+- **Nombres al estilo FileBot (opcional)**: mismas variables (`{n} {y} {s00e00} {t}`…), preajustes FileBot y Plex, títulos de episodios de TMDB, vista previa antes → después. Desactivado por defecto (se conservan los nombres originales).
 - **Detecta duplicados** (película: título + año; episodio: serie + SxxEyy).
 - **Sin duplicar espacio**: reflink (Btrfs/XFS), si no enlace físico, si no copia normal. El original se queda donde está.
 - **En caso de duda → « Por clasificar »**: fichas de TMDB con póster, tú eliges y la app lo recuerda.
