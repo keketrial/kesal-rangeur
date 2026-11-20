@@ -62,6 +62,20 @@ Everything is configured in the UI. Files live in the config folder: `config.tom
 
 **TMDB key**: free at [themoviedb.org](https://www.themoviedb.org/settings/api). Each user enters their own; none is bundled. A step-by-step guide is in the app's help.
 
+## Assistant (MCP)
+
+An AI assistant (Claude Code, Claude Desktop…) can help you configure and operate the app: `kesal-rangeur mcp` is an [MCP](https://modelcontextprotocol.io) server (stdio) that drives an **already running** instance through its HTTP API. It keeps dry-run mode on until you have explicitly agreed to real copies.
+
+```sh
+claude mcp add kesal-rangeur -- kesal-rangeur mcp
+# with Docker:
+claude mcp add kesal-rangeur -- docker exec -i kesal-rangeur kesal-rangeur mcp
+# app not on http://127.0.0.1:3050:
+claude mcp add kesal-rangeur -e KESAL_URL=http://nas:3050 -- kesal-rangeur mcp
+```
+
+Then ask the assistant to use the `setup_kesal_rangeur` prompt (guided first-run setup). Details: [docs/mcp.md](docs/mcp.md).
+
 ## Network security
 
 The UI has **no password**: keep it on your local network, never expose it to the Internet without a VPN or an authenticated reverse proxy.

@@ -1,6 +1,7 @@
 mod config;
 mod exec;
 mod library;
+mod mcp;
 mod naming;
 mod notify;
 mod norm;
@@ -63,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
             let bind = std::env::var("KESAL_BIND").unwrap_or("0.0.0.0:3050".into());
             web::serve(cfg_path, bind).await?;
         }
+        Some("mcp") => mcp::run().await?, // serveur MCP sur stdio (KESAL_URL = application visée)
         Some("selftest") => {
             // kesal-rangeur selftest <dossier d'arrivée> [dossier de destination] : quelles copies marchent entre les deux ?
             let a = Path::new(args.get(2).map(|s| s.as_str()).unwrap_or("."));
