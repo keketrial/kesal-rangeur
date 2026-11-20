@@ -62,6 +62,20 @@ Tout se fait dans l'interface. Les fichiers sont dans le dossier de configuratio
 
 **Clé TMDB** : gratuite sur [themoviedb.org](https://www.themoviedb.org/settings/api). Chaque utilisateur saisit la sienne ; aucune n'est fournie. Le guide pas à pas est dans l'aide de l'appli.
 
+## Assistant (MCP)
+
+Un assistant IA (Claude Code, Claude Desktop…) peut vous aider à configurer et utiliser l'appli : `kesal-rangeur mcp` est un serveur [MCP](https://modelcontextprotocol.io) (stdio) qui pilote une instance **déjà lancée** via son API HTTP. Il garde l'essai à blanc actif tant que vous n'avez pas explicitement accepté les vraies copies.
+
+```sh
+claude mcp add kesal-rangeur -- kesal-rangeur mcp
+# avec Docker :
+claude mcp add kesal-rangeur -- docker exec -i kesal-rangeur kesal-rangeur mcp
+# application ailleurs que sur http://127.0.0.1:3050 :
+claude mcp add kesal-rangeur -e KESAL_URL=http://nas:3050 -- kesal-rangeur mcp
+```
+
+Demandez ensuite à l'assistant d'utiliser le prompt `setup_kesal_rangeur` (première configuration guidée). Détails : [docs/mcp.md](docs/mcp.md).
+
 ## Sécurité réseau
 
 L'interface n'a **pas de mot de passe** : gardez-la sur votre réseau local, ne l'exposez pas sur Internet sans VPN ou reverse proxy authentifié.

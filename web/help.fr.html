@@ -148,6 +148,15 @@
 <div class="warn"><b>Un seul montage pour tout.</b> Pour que la copie soit instantanée (reflink ou lien physique), l'arrivée et les destinations doivent être sur le <b>même volume</b>, et vus par le conteneur dans <b>un même montage</b>. Avec plusieurs montages séparés, Linux traite chaque montage comme un volume distinct et la copie devient une vraie copie, lente et qui double l'espace utilisé.</div>
 <p>L'interface est ensuite sur <code>http://adresse-du-serveur:3050</code>.</p>
 
+<h3 id="mcp">Assistant IA (MCP)</h3>
+<p>Un assistant IA (Claude Code, Claude Desktop…) peut vous aider à configurer et utiliser l'appli, grâce à la commande <code>kesal-rangeur mcp</code> (protocole MCP). Elle ne fait que relayer vers cette appli, qui doit donc déjà tourner.</p>
+<pre><code>claude mcp add kesal-rangeur -- kesal-rangeur mcp
+# avec Docker :
+claude mcp add kesal-rangeur -- docker exec -i kesal-rangeur kesal-rangeur mcp</code></pre>
+<p>Si l'appli n'est pas sur <code>http://127.0.0.1:3050</code>, ajoutez la variable <code>KESAL_URL</code>. Demandez ensuite à l'assistant d'utiliser le prompt <code>setup_kesal_rangeur</code> : il vous guide pas à pas.</p>
+<ul><li>L'assistant <b>garde l'essai à blanc actif</b> et ne passe aux vraies copies qu'avec votre accord explicite.</li>
+<li>Vos clés (TMDB, Plex…) se saisissent de préférence ici, dans les Réglages, plutôt que dans la discussion.</li></ul>
+
 <h3 id="securite">Sécurité</h3>
 <ul><li>L'interface n'a <b>pas de mot de passe</b> : gardez-la sur votre réseau local. <b>Ne l'ouvrez pas sur Internet</b> sans protection (VPN, reverse proxy avec authentification).</li>
 <li>L'explorateur de dossiers liste les dossiers du serveur : une raison de plus.</li>
