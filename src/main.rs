@@ -1,10 +1,14 @@
+mod config;
 mod library;
 mod norm;
 mod parser;
+mod plan;
+mod tmdb;
 
 use std::path::Path;
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(|s| s.as_str()) {
         Some("parse") => {
@@ -49,7 +53,36 @@ fn main() -> anyhow::Result<()> {
             }
             eprintln!("{} dossiers en {:.1}s", lib.len(), t.elapsed().as_secs_f32());
         }
-        _ => eprintln!("usage : kesal-rangeur parse|index <dossier>"),
+        Some("plan") => {
+            // kesal-rangeur plan <config.toml> : essai à blanc, ne touche à rien
+            let cfg = config::Config::load(Path::new(args.get(2).map(|s| s.as_str()).unwrap_or("data/config.toml")))?;
+            let tmdb = tmdb::Tmdb::new(cfg.tmdb_secret()?, cfg.language.clone(), &cfg.data_dir)?;
+            let planner = plan::Planner::new(&cfg, &tmdb);
+            for input in &cfg.inputs {
+                println!("=== {} (mode {}, {}) ===", input.path.display(), input.mode, input.action);
+                let items = planner.plan_input(input).await?;
+                for it in &items {
+                    let rec = it.reconnu.as_ref().map(|r| format!("{} ({}) → {}", r.titre, r.annee.map(|y| y.to_string()).unwrap_or("?".into()), r.categorie.label())).unwrap_or_default();
+                    println!("• {}", it.nom);
+                    if !rec.is_empty() {
+                        println!("    reconnu : {rec}");
+                    }
+                    match &it.decision {
+                        plan::Decision::Ranger { vers, nouveau_dossier } => println!("    RANGER{} → {}", if *nouveau_dossier { " (nouveau dossier)" } else { "" }, vers.display()),
+                        plan::Decision::Doublon { existant, raison } => println!("    DOUBLON : {raison} → {}", existant.display()),
+                        plan::Decision::ATrier { raison, propositions } => {
+                            println!("    À TRIER : {raison}");
+                            for p in propositions { println!("       ? {p}"); }
+                        }
+                        plan::Decision::Attendre { raison } => println!("    ATTENDRE : {raison}"),
+                        plan::Decision::Ignorer { raison } => println!("    ignoré : {raison}"),
+                    }
+                }
+            }
+            tmdb.save_cache();
+            eprintln!("{} requêtes TMDB", tmdb.requests.lock().unwrap());
+        }
+        _ => eprintln!("usage : kesal-rangeur parse|index <dossier> | plan <config.toml>"),
     }
     Ok(())
 }
