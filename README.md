@@ -78,7 +78,11 @@ Demandez ensuite à l'assistant d'utiliser le prompt `setup_kesal_rangeur` (prem
 
 ## Sécurité réseau
 
-L'interface n'a **pas de mot de passe** : gardez-la sur votre réseau local, ne l'exposez pas sur Internet sans VPN ou reverse proxy authentifié.
+- **Mot de passe (conseillé)** : définissez la variable `KESAL_PASSWORD` ; toute l'interface demande alors ce mot de passe (n'importe quel identifiant).
+- **Noms d'hôte** : l'accès par adresse IP, `localhost`, un nom court (service Docker) ou `.local` est accepté. Pour un nom de domaine (tunnel, reverse proxy), ajoutez-le à `KESAL_ALLOWED_HOSTS` (liste séparée par des virgules) : cela protège du « DNS rebinding ».
+- Les requêtes qui modifient quoi que ce soit sont refusées si elles viennent d'un autre site web (contrôle de l'en-tête `Origin`).
+- Un jeton (Plex, Jellyfin, Home Assistant) est **lié à l'adresse saisie avec lui** : si l'adresse change sans nouveau jeton, l'ancien est effacé.
+- Gardez malgré tout l'interface sur votre réseau local ou derrière un VPN ; ne l'exposez pas directement sur Internet.
 
 ## À venir
 

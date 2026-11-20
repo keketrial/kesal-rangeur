@@ -82,3 +82,14 @@ cargo test mcp                    # JSON-RPC layer and configure merge logic (no
 KESAL_BIND=127.0.0.1:3061 target/debug/kesal-rangeur serve /path/to/sandbox/config.toml &
 python3 -I tests/mcp_integration.py --bin target/debug/kesal-rangeur --url http://127.0.0.1:3061
 ```
+
+
+## Interface protégée par mot de passe
+
+Si l'application tourne avec `KESAL_PASSWORD`, mettez les identifiants dans l'adresse :
+
+```sh
+KESAL_URL=http://moi:LE_MOT_DE_PASSE@127.0.0.1:3050 kesal-rangeur mcp
+```
+
+Sans eux, les outils répondent « HTTP 401 : Mot de passe requis ». Si vous accédez à l'application par un nom de domaine, celui-ci doit figurer dans `KESAL_ALLOWED_HOSTS` côté serveur.

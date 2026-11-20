@@ -158,9 +158,15 @@ claude mcp add kesal-rangeur -- docker exec -i kesal-rangeur kesal-rangeur mcp</
 <li>Vos clés (TMDB, Plex…) se saisissent de préférence ici, dans les Réglages, plutôt que dans la discussion.</li></ul>
 
 <h3 id="securite">Sécurité</h3>
-<ul><li>L'interface n'a <b>pas de mot de passe</b> : gardez-la sur votre réseau local. <b>Ne l'ouvrez pas sur Internet</b> sans protection (VPN, reverse proxy avec authentification).</li>
-<li>L'explorateur de dossiers liste les dossiers du serveur : une raison de plus.</li>
-<li>Les clés et jetons sont dans <code>secrets.json</code> (droits 600), jamais dans le fichier de réglages ni dans les journaux.</li></ul>
+<ul>
+<li><b>Mot de passe</b> : définissez la variable <code>KESAL_PASSWORD</code> au lancement (par exemple dans le <code>docker-compose.yml</code>). Toute l'interface demandera alors ce mot de passe (n'importe quel identifiant). Fortement conseillé dès que l'appli est sur un réseau partagé.</li>
+<li><b>Nom de domaine</b> : l'accès par adresse IP, <code>localhost</code>, nom court ou <code>.local</code> marche tel quel. Si vous passez par un nom de domaine (tunnel, reverse proxy), ajoutez-le à <code>KESAL_ALLOWED_HOSTS</code> (séparés par des virgules) ; sinon il est refusé (protection contre le « DNS rebinding »).</li>
+<li>Les actions venant d'un autre site web sont refusées (contrôle de l'origine).</li>
+<li>Les <b>jetons</b> (Plex, Jellyfin, Home Assistant) sont liés à leur adresse : <b>si vous changez l'adresse, saisissez de nouveau le jeton</b> (l'ancien est effacé pour qu'il ne puisse pas partir ailleurs). Ils sont rangés dans <code>secrets.json</code> (droits 600), jamais dans le fichier de réglages ni dans les journaux, et l'interface n'en montre aucune partie.</li>
+<li>L'explorateur de dossiers liste les dossiers du serveur : une raison de plus de protéger l'accès.</li>
+<li>Les liens symboliques dans le dossier d'arrivée sont ignorés (ils pourraient pointer hors du dossier).</li>
+<li>Même avec un mot de passe, ne l'ouvrez pas directement sur Internet sans VPN ou reverse proxy HTTPS : le mot de passe circulerait en clair.</li>
+</ul>
 
 <h3 id="faq">Questions fréquentes</h3>
 <h4>« Aucune fiche TMDB trouvée »</h4><p>Le titre du fichier est trop différent. Utilisez <b>Corriger la fiche…</b> et cherchez à la main : l'appli retiendra le choix.</p>

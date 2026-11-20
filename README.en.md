@@ -78,7 +78,11 @@ Then ask the assistant to use the `setup_kesal_rangeur` prompt (guided first-run
 
 ## Network security
 
-The UI has **no password**: keep it on your local network, never expose it to the Internet without a VPN or an authenticated reverse proxy.
+- **Password (recommended)**: set the `KESAL_PASSWORD` environment variable; the whole UI then asks for it (any username).
+- **Host names**: access by IP address, `localhost`, a short name (Docker service) or `.local` is accepted. For a domain name (tunnel, reverse proxy), add it to `KESAL_ALLOWED_HOSTS` (comma-separated); this protects against DNS rebinding.
+- Requests that change anything are refused when they come from another website (`Origin` header check).
+- A token (Plex, Jellyfin, Home Assistant) is **bound to the address it was entered with**: if the address changes without a new token, the old one is erased.
+- Still keep the UI on your local network or behind a VPN; do not expose it directly to the Internet.
 
 ## Roadmap
 

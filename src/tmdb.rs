@@ -137,7 +137,10 @@ impl Tmdb {
             return Err(anyhow!("TMDB a répondu {status} pour {path}"));
         }
         let v: Value = resp.json().await?;
-        self.cache.lock().unwrap().entries.insert(key, (now(), v.clone()));
+        // Une recherche sans résultat n'est gardée que 6 h (TMDB peut avoir ajouté la fiche, ou avoir répondu à côté) ; le reste 30 jours.
+        let vide = path.starts_with("/search/") && v["results"].as_array().map_or(false, |r| r.is_empty());
+        let stamp = if vide { now().saturating_sub(CACHE_TTL_SECS - 6 * 3600) } else { now() };
+        self.cache.lock().unwrap().entries.insert(key, (stamp, v.clone()));
         Ok(v)
     }
 
@@ -223,24 +226,45 @@ impl Tmdb {
     }
 
     /// Cherche une release et classe les candidats, du meilleur au moins bon.
+    /// Si TMDB ne trouve rien, on réessaie avec des variantes du titre (sans article initial, sans le dernier mot).
     pub async fn identify(&self, rel: &Release) -> Result<Vec<Candidate>> {
-        let query = rel.title.clone();
-        if query.trim().is_empty() {
+        if rel.title.trim().is_empty() {
             return Ok(vec![]);
         }
         let mut cands = Vec::new();
-        if rel.is_series_like() {
-            cands.extend(self.search_kind(Media::Tv, &query).await?);
-        } else if rel.is_movie_like() {
-            cands.extend(self.search_kind(Media::Movie, &query).await?);
-        } else {
-            cands.extend(self.search_kind(Media::Movie, &query).await?);
-            cands.extend(self.search_kind(Media::Tv, &query).await?);
+        for query in query_variants(&rel.title) {
+            if rel.is_series_like() {
+                cands.extend(self.search_kind(Media::Tv, &query).await?);
+            } else if rel.is_movie_like() {
+                cands.extend(self.search_kind(Media::Movie, &query).await?);
+            } else {
+                cands.extend(self.search_kind(Media::Movie, &query).await?);
+                cands.extend(self.search_kind(Media::Tv, &query).await?);
+            }
+            if !cands.is_empty() {
+                break;
+            }
         }
         score_candidates(rel, &mut cands);
         cands.truncate(8);
         Ok(cands)
     }
+}
+
+/// Titres à essayer, du plus fidèle au plus tolérant (3 au plus).
+pub fn query_variants(title: &str) -> Vec<String> {
+    const ARTICLES: &[&str] = &["le", "la", "les", "l", "un", "une", "the", "a", "an", "el", "los", "las"];
+    let words: Vec<&str> = title.split_whitespace().collect();
+    let mut v = vec![title.trim().to_string()];
+    if words.len() > 1 && ARTICLES.contains(&words[0].to_lowercase().trim_end_matches(['\'', '’']).as_ref()) {
+        v.push(words[1..].join(" "));
+    }
+    if words.len() >= 4 {
+        v.push(words[..words.len() - 1].join(" "));
+    }
+    v.dedup();
+    v.truncate(3);
+    v
 }
 
 /// Calcule `sim` et `score` de chaque candidat et les trie, du meilleur au moins bon.
@@ -292,6 +316,14 @@ mod tests {
 
     fn cand(id: u64, title: &str, year: u16, pop: f32) -> Candidate {
         Candidate { id, media: Media::Tv, title: title.into(), original_title: title.into(), year: Some(year), genres: vec![], countries: vec![], poster: None, overview: String::new(), popularity: pop, sim: 0.0, score: 0.0 }
+    }
+
+    #[test]
+    fn variantes_de_requete() {
+        assert_eq!(query_variants("les lincoln lawyer"), vec!["les lincoln lawyer", "lincoln lawyer"]);
+        assert_eq!(query_variants("Asterix And Obelix The Big Fight"), vec!["Asterix And Obelix The Big Fight", "Asterix And Obelix The Big"]);
+        assert_eq!(query_variants("Dexter"), vec!["Dexter"]);
+        assert!(query_variants("a b c d e f g").len() <= 3);
     }
 
     #[test]

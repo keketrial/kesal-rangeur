@@ -17,6 +17,13 @@ pub fn key(s: &str) -> String {
     if words.len() > 1 && ARTICLES.contains(&words[0].as_str()) {
         words.remove(0);
     }
+    // « Rocky II » = « Rocky 2 » : chiffres romains ii…xii → chiffres (jamais en 1er mot, ni « i », « v », « x » seuls)
+    const ROMAN: &[(&str, &str)] = &[("ii", "2"), ("iii", "3"), ("iv", "4"), ("vi", "6"), ("vii", "7"), ("viii", "8"), ("ix", "9"), ("xi", "11"), ("xii", "12")];
+    for w in words.iter_mut().skip(1) {
+        if let Some((_, n)) = ROMAN.iter().find(|(r, _)| *r == w.as_str()) {
+            *w = n.to_string();
+        }
+    }
     words.join(" ")
 }
 
@@ -33,7 +40,19 @@ fn bigrams(s: &str) -> Vec<(char, char)> {
 /// Les nombres entiers du titre (« Nordholm 2 » → ["2"]). Deux titres qui n'ont pas les mêmes nombres
 /// sont deux œuvres différentes (suites, numéros), même s'ils se ressemblent presque lettre pour lettre.
 fn numbers(s: &str) -> Vec<String> {
-    key(s).split(' ').filter(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_digit())).map(String::from).collect()
+    // « Rocky III » ≠ « Rocky II » : les chiffres romains ii…xii comptent comme des nombres (pas « i », « v », « x » seuls : ce sont des mots)
+    const ROMAN: &[(&str, &str)] = &[("ii", "2"), ("iii", "3"), ("iv", "4"), ("vi", "6"), ("vii", "7"), ("viii", "8"), ("ix", "9"), ("xi", "11"), ("xii", "12")];
+    key(s)
+        .split(' ')
+        .filter(|w| !w.is_empty())
+        .filter_map(|w| {
+            if w.chars().all(|c| c.is_ascii_digit()) {
+                Some(w.to_string())
+            } else {
+                ROMAN.iter().find(|(r, _)| *r == w).map(|(_, n)| n.to_string())
+            }
+        })
+        .collect()
 }
 
 /// Ressemblance entre deux titres, de 0 (rien à voir) à 1 (identiques après normalisation).
@@ -85,6 +104,14 @@ mod tests {
         assert!(similarity("Meurtres à Nordholm 2", "Meurtres à Nordholm 1") <= 0.5);
         assert!(similarity("21 Jump Street", "22 Jump Street") <= 0.5);
         assert_eq!(similarity("Paris Police 1905", "paris police 1905"), 1.0);
+    }
+
+    #[test]
+    fn chiffres_romains() {
+        assert!(similarity("The Godfather Part II", "The Godfather Part III") <= 0.5);
+        assert!(similarity("Rocky III", "Rocky II") <= 0.5);
+        assert!(similarity("Rocky II", "Rocky 2") >= 0.9, "romain et arabe s'équivalent");
+        assert_eq!(similarity("Rocky II", "rocky ii"), 1.0);
     }
 
     #[test]

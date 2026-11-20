@@ -70,7 +70,10 @@ pub enum ExecError {
     Existe(PathBuf),
     SourceAbsente(PathBuf),
     PasPret(String),
+    /// Panne possiblement passagère (réseau, accès) : on réessaie.
     Io(String),
+    /// Panne durable (nom trop long, disque plein, lecture seule…) : inutile de réessayer.
+    Fatal(String),
     Verification(String),
 }
 
@@ -80,20 +83,29 @@ impl std::fmt::Display for ExecError {
             ExecError::Existe(p) => write!(f, "la destination existe déjà : {}", p.display()),
             ExecError::SourceAbsente(p) => write!(f, "l'original a disparu : {}", p.display()),
             ExecError::PasPret(s) => write!(f, "pas prêt : {s}"),
-            ExecError::Io(s) => write!(f, "{s}"),
+            ExecError::Io(s) | ExecError::Fatal(s) => write!(f, "{s}"),
             ExecError::Verification(s) => write!(f, "vérification échouée : {s}"),
         }
     }
 }
 
 fn io_err(ctx: &str, e: io::Error) -> ExecError {
-    let msg = match e.raw_os_error() {
-        Some(28) => "plus de place sur le disque de destination".to_string(),
-        Some(13) | Some(1) => "accès refusé".to_string(),
-        Some(30) => "destination en lecture seule".to_string(),
-        _ => e.to_string(),
+    let (msg, fatal) = match e.raw_os_error() {
+        Some(28) => ("plus de place sur le disque de destination".to_string(), true),
+        Some(13) | Some(1) => ("accès refusé".to_string(), false),
+        Some(30) => ("destination en lecture seule".to_string(), true),
+        Some(36) => ("nom de fichier trop long pour la destination".to_string(), true),
+        _ => (e.to_string(), false),
     };
-    ExecError::Io(format!("{ctx} : {msg}"))
+    if fatal { ExecError::Fatal(format!("{ctx} : {msg}")) } else { ExecError::Io(format!("{ctx} : {msg}")) }
+}
+
+/// Refuse un lien symbolique : suivre un lien hors du dossier d'arrivée permettrait de copier (ou, en « déplacer », de supprimer) autre chose.
+fn refuse_symlink(p: &Path) -> Result<(), ExecError> {
+    if fs::symlink_metadata(p).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        return Err(ExecError::Fatal(format!("lien symbolique refusé : {}", p.display())));
+    }
+    Ok(())
 }
 
 fn now() -> u64 {
@@ -207,6 +219,7 @@ pub fn execute(r: &Request) -> Result<Entry, ExecError> {
     if !r.source.exists() {
         return Err(ExecError::SourceAbsente(r.source.to_path_buf()));
     }
+    refuse_symlink(r.source)?;
     // Nouvelle vérification juste avant de copier : l'élément ne doit plus bouger.
     match check_settled(r.source, r.settle_minutes) {
         Settle::Pret => {}
@@ -243,7 +256,8 @@ pub fn execute(r: &Request) -> Result<Entry, ExecError> {
             let m = place_file(r.source, dst, r.method)?;
             fichiers.push(Fichier { src: r.source.to_path_buf(), dst: r.vers.to_path_buf(), taille: fs::metadata(r.source).map(|m| m.len()).unwrap_or(0), methode: m.into() });
         } else {
-            for e in WalkDir::new(r.source).min_depth(1).into_iter().filter_map(|e| e.ok()) {
+            for e in WalkDir::new(r.source).min_depth(1) {
+                let e = e.map_err(|e| ExecError::Fatal(format!("dossier illisible dans l'élément : {e}")))?;
                 let name = e.file_name().to_string_lossy();
                 if crate::library::is_junk_name(&name) {
                     continue;
@@ -338,10 +352,12 @@ fn nearest_existing(p: &Path) -> PathBuf {
 /// Rangement avec chemins calculés : chaque fichier est copié dans un dossier provisoire, vérifié, puis mis en place.
 /// En cas d'échec à n'importe quel moment, tout ce qui a été placé est retiré.
 fn execute_plan(r: &Request) -> Result<Entry, ExecError> {
+    refuse_symlink(r.source)?;
     for (src, _) in r.plan {
         if !src.exists() {
             return Err(ExecError::SourceAbsente(src.clone()));
         }
+        refuse_symlink(src)?;
     }
     match check_settled(r.source, r.settle_minutes) {
         Settle::Pret => {}
@@ -480,7 +496,19 @@ pub struct History {
 impl History {
     pub fn load(data_dir: &Path) -> History {
         let path = data_dir.join("history.json");
-        let entries = fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        let entries = match fs::read_to_string(&path) {
+            Ok(t) => match serde_json::from_str(&t) {
+                Ok(v) => v,
+                Err(e) => {
+                    // fichier abîmé : on le garde de côté (jamais écrasé) pour ne pas perdre les informations d'annulation
+                    let bak = path.with_extension(format!("json.corrompu-{}", now()));
+                    let _ = fs::rename(&path, &bak);
+                    eprintln!("[erreur] history.json illisible ({e}) : conservé dans {}", bak.display());
+                    Vec::new()
+                }
+            },
+            Err(_) => Vec::new(),
+        };
         History { path, entries: Mutex::new(entries) }
     }
     fn save(&self, v: &[Entry]) {
@@ -489,8 +517,8 @@ impl History {
         }
         if let Ok(t) = serde_json::to_string_pretty(v) {
             let tmp = self.path.with_extension("json.tmp");
-            if fs::write(&tmp, t).is_ok() {
-                let _ = fs::rename(&tmp, &self.path);
+            if let Err(e) = fs::write(&tmp, t).and_then(|_| fs::rename(&tmp, &self.path)) {
+                eprintln!("[erreur] history.json non enregistré : {e}");
             }
         }
     }
@@ -501,6 +529,12 @@ impl History {
     }
     pub fn all(&self) -> Vec<Entry> {
         self.entries.lock().unwrap().clone()
+    }
+    /// Il y a combien de secondes la dernière erreur pour cet élément (None s'il n'y en a pas, ou s'il a été rangé depuis).
+    pub fn last_error_age(&self, nom: &str) -> Option<u64> {
+        let v = self.entries.lock().unwrap();
+        let last = v.iter().rev().find(|e| e.nom == nom)?;
+        (last.statut == "erreur").then(|| now().saturating_sub(last.t))
     }
     pub fn get(&self, id: &str) -> Option<Entry> {
         self.entries.lock().unwrap().iter().find(|e| e.id == id).cloned()
@@ -814,6 +848,65 @@ mod tests {
     }
 
     #[test]
+    fn lien_symbolique_refuse_et_rien_n_est_touche() {
+        let t = tempfile::tempdir().unwrap();
+        let dehors = t.path().join("dehors/Show.S01");
+        mk(&dehors.join("e1.mkv"), "secret");
+        fs::create_dir_all(t.path().join("in")).unwrap();
+        let lien = t.path().join("in/Show.S01");
+        std::os::unix::fs::symlink(&dehors, &lien).unwrap();
+        age_dir(&t.path().join("dehors"));
+        for action in [Action::Copy, Action::Move] {
+            let r = execute(&req(&lien, &t.path().join("out/Show.S01"), &[], action, Method::Auto));
+            assert!(matches!(r, Err(ExecError::Fatal(_))), "{r:?}");
+        }
+        assert_eq!(fs::read_to_string(dehors.join("e1.mkv")).unwrap(), "secret", "le dossier pointé n'est pas touché");
+        assert!(!t.path().join("out").exists());
+        // un fichier-lien
+        let f = t.path().join("in/Film.mkv");
+        mk(&t.path().join("dehors/x.txt"), "mot de passe");
+        std::os::unix::fs::symlink(t.path().join("dehors/x.txt"), &f).unwrap();
+        let r = execute(&plan_req(&f, &t.path().join("films"), &[(f.clone(), t.path().join("films/Film.mkv"))], Action::Copy));
+        assert!(matches!(r, Err(ExecError::Fatal(_))));
+    }
+
+    #[test]
+    fn historique_corrompu_est_conserve() {
+        let t = tempfile::tempdir().unwrap();
+        fs::create_dir_all(t.path().join("data")).unwrap();
+        fs::write(t.path().join("data/history.json"), "[{\"id\": \"a\", tronqué").unwrap();
+        let h = History::load(&t.path().join("data"));
+        assert!(h.all().is_empty());
+        let sauvegardes: Vec<_> = fs::read_dir(t.path().join("data")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).filter(|n| n.contains("corrompu")).collect();
+        assert_eq!(sauvegardes.len(), 1, "le fichier abîmé est gardé de côté");
+    }
+
+    #[test]
+    fn nettoyage_des_dossiers_provisoires_abandonnes() {
+        let t = tempfile::tempdir().unwrap();
+        let vieux = t.path().join("series/Show/.kesal-en-cours-abc");
+        mk(&vieux.join("0"), "reste");
+        let neuf = t.path().join("series/.kesal-en-cours-xyz");
+        fs::create_dir_all(&neuf).unwrap();
+        let autre = t.path().join("series/Show/.kesal-autre");
+        fs::create_dir_all(&autre).unwrap();
+        // le plus vieux est âgé de 2 h
+        let f = fs::File::open(&vieux).unwrap();
+        f.set_modified(SystemTime::now() - Duration::from_secs(7200)).unwrap();
+        let n = sweep_staging(&[t.path().join("series")], 1800);
+        assert_eq!(n, 1);
+        assert!(!vieux.exists() && neuf.exists() && autre.exists(), "seul le vieux dossier provisoire est retiré");
+    }
+
+    #[test]
+    fn erreurs_durables_ne_sont_pas_reessayees() {
+        assert!(matches!(io_err("x", io::Error::from_raw_os_error(36)), ExecError::Fatal(_)));
+        assert!(matches!(io_err("x", io::Error::from_raw_os_error(28)), ExecError::Fatal(_)));
+        assert!(matches!(io_err("x", io::Error::from_raw_os_error(30)), ExecError::Fatal(_)));
+        assert!(matches!(io_err("x", io::Error::from_raw_os_error(5)), ExecError::Io(_)));
+    }
+
+    #[test]
     fn historique_enregistre_et_recharge() {
         let t = tempfile::tempdir().unwrap();
         let src = t.path().join("in/a.mkv");
@@ -849,4 +942,22 @@ pub fn selftest(from_dir: &Path, to_dir: &Path) -> Vec<(String, Result<String, S
     let _ = fs::remove_dir_all(&a); // uniquement les dossiers de test créés ci-dessus
     let _ = fs::remove_dir_all(&b);
     out
+}
+
+/// Supprime les dossiers provisoires `.kesal-en-cours-*` abandonnés (arrêt brutal pendant une copie).
+/// Ne touche qu'à des dossiers portant ce nom, plus vieux que `min_age_secs`, jusqu'à 2 niveaux sous chaque racine.
+pub fn sweep_staging(roots: &[PathBuf], min_age_secs: u64) -> usize {
+    let mut removed = 0;
+    for root in roots {
+        for e in WalkDir::new(root).min_depth(1).max_depth(2).into_iter().filter_map(|e| e.ok()) {
+            if !e.file_type().is_dir() || !e.file_name().to_string_lossy().starts_with(".kesal-en-cours-") {
+                continue;
+            }
+            let age = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| SystemTime::now().duration_since(t).ok()).map(|d| d.as_secs()).unwrap_or(0);
+            if age >= min_age_secs && fs::remove_dir_all(e.path()).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
 }

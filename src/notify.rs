@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 fn client() -> reqwest::Client {
-    reqwest::Client::builder().timeout(Duration::from_secs(10)).build().unwrap()
+    reqwest::Client::builder().timeout(Duration::from_secs(10)).redirect(reqwest::redirect::Policy::none()).build().unwrap()
 }
 
 fn base(u: &str) -> String {

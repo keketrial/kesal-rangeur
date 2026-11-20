@@ -8,7 +8,9 @@ use crate::library::LibEntry;
 use crate::plan::{Choice, Decision, Item, Planner};
 use crate::tmdb::{Candidate, Media, Tmdb};
 use crate::{norm, parser};
-use axum::extract::{Query, State};
+use axum::extract::{Query, Request, State};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
@@ -48,6 +50,10 @@ pub struct AppState {
     pub scan: StdMutex<ScanState>,
     pub log: StdMutex<VecDeque<LogLine>>,
     pub history: History,
+    /// Mot de passe facultatif (variable KESAL_PASSWORD) : protège toute l'interface.
+    pub password: Option<String>,
+    /// Noms d'hôte supplémentaires autorisés (KESAL_ALLOWED_HOSTS), ex. un nom de domaine derrière un tunnel.
+    pub allowed_hosts: Vec<String>,
     /// Éléments en cours de rangement (évite les doubles clics) et file d'attente : une copie à la fois.
     pub busy: StdMutex<HashSet<String>>,
     pub gate: tokio::sync::Semaphore,
@@ -93,6 +99,8 @@ pub async fn serve(cfg_path: PathBuf, bind: String) -> anyhow::Result<()> {
         scan: StdMutex::new(ScanState::default()),
         log: StdMutex::new(VecDeque::new()),
         history: History::load(&data_dir),
+        password: std::env::var("KESAL_PASSWORD").ok().filter(|p| !p.is_empty()),
+        allowed_hosts: std::env::var("KESAL_ALLOWED_HOSTS").unwrap_or_default().split(',').map(|h| h.trim().to_lowercase()).filter(|h| !h.is_empty()).collect(),
         busy: StdMutex::new(HashSet::new()),
         gate: tokio::sync::Semaphore::new(1),
     });
@@ -118,8 +126,13 @@ pub async fn serve(cfg_path: PathBuf, bind: String) -> anyhow::Result<()> {
         .route("/api/undo", post(api_undo))
         .route("/api/services/test", post(api_services_test))
         .route("/api/naming/preview", post(api_naming_preview))
+        .layer(middleware::from_fn_with_state(st.clone(), guard))
         .with_state(st.clone());
-    // Analyse périodique (si réglée) : rien n'est écrit tant que l'essai à blanc est actif.
+    if st.password.is_none() {
+        st.log("info", "Pas de mot de passe (KESAL_PASSWORD) : gardez cette interface sur votre réseau local.");
+    }
+    // Nettoyage des dossiers provisoires abandonnés par un arrêt brutal, puis analyse périodique (si réglée) : rien n'est écrit tant que l'essai à blanc est actif.
+    tokio::spawn(sweep_loop(st.clone()));
     tokio::spawn(scheduler(st.clone()));
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     axum::serve(listener, app).await?;
@@ -198,7 +211,7 @@ async fn api_scan(State(st): State<S>) -> R<Value> {
         sc.error = None;
     }
     let st2 = st.clone();
-    tokio::spawn(async move { run_scan(st2).await });
+    tokio::spawn(async move { run_scan_guarded(st2).await });
     Ok(Json(json!({"demarre": true})))
 }
 
@@ -361,12 +374,7 @@ struct SettingsIn {
 }
 
 fn hint(s: &str) -> Value {
-    if s.is_empty() {
-        json!({"ok": false})
-    } else {
-        let tail: String = s.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
-        json!({"ok": true, "fin": tail})
-    }
+    json!({"ok": !s.is_empty()})
 }
 
 async fn api_settings_get(State(st): State<S>) -> R<Value> {
@@ -401,7 +409,14 @@ async fn api_settings_set(State(st): State<S>, Json(s): Json<SettingsIn>) -> R<V
     if let Some(f) = s.naming.formats() {
         naming::preview(&f).map_err(|e| bad(format!("format de nom invalide : {e}")))?;
     }
+    for (nom, u) in [("Plex", &s.plex_url), ("Jellyfin", &s.jellyfin_url), ("Home Assistant", &s.ha_url)] {
+        let u = u.trim();
+        if !u.is_empty() && !(u.starts_with("http://") || u.starts_with("https://")) {
+            return Err(bad(format!("adresse de {nom} invalide : elle doit commencer par http:// ou https://")));
+        }
+    }
     let mut cfg = st.cfg.write().await;
+    let old_urls = cfg.integrations.clone();
     cfg.naming = s.naming.clone();
     cfg.language = s.language;
     cfg.inputs = s.inputs;
@@ -428,6 +443,21 @@ async fn api_settings_set(State(st): State<S>, Json(s): Json<SettingsIn>) -> R<V
             *dst = src.trim().to_string();
         }
     }
+    // Un jeton n'est valable que pour l'adresse à laquelle il a été saisi : si l'adresse change sans nouveau jeton, l'ancien est effacé
+    // (sinon, changer l'adresse suffirait à envoyer le jeton ailleurs).
+    let mut effaces = Vec::new();
+    if cfg.integrations.plex_url.trim_end_matches('/') != old_urls.plex_url.trim_end_matches('/') && s.plex_token.trim().is_empty() && !sec.plex.is_empty() {
+        sec.plex.clear();
+        effaces.push("Plex");
+    }
+    if cfg.integrations.jellyfin_url.trim_end_matches('/') != old_urls.jellyfin_url.trim_end_matches('/') && s.jellyfin_key.trim().is_empty() && !sec.jellyfin.is_empty() {
+        sec.jellyfin.clear();
+        effaces.push("Jellyfin");
+    }
+    if cfg.integrations.ha_url.trim_end_matches('/') != old_urls.ha_url.trim_end_matches('/') && s.ha_token.trim().is_empty() && !sec.ha.is_empty() {
+        sec.ha.clear();
+        effaces.push("Home Assistant");
+    }
     sec.save(&cfg.data_dir).map_err(err500)?;
     cfg.save(&st.cfg_path).map_err(err500)?;
     let new_tmdb = build_tmdb(&cfg).await;
@@ -435,7 +465,10 @@ async fn api_settings_set(State(st): State<S>, Json(s): Json<SettingsIn>) -> R<V
     drop(cfg);
     *st.tmdb.write().await = new_tmdb;
     st.log("info", "Réglages enregistrés");
-    Ok(Json(json!({"ok": true, "tmdb": ok})))
+    if !effaces.is_empty() {
+        st.log("info", format!("Adresse modifiée : le jeton de {} a été effacé, saisissez-le à nouveau.", effaces.join(", ")));
+    }
+    Ok(Json(json!({"ok": true, "tmdb": ok, "jetons_effaces": effaces})))
 }
 
 // ---------- explorateur de dossiers ----------
@@ -448,7 +481,7 @@ struct FsQ {
 async fn api_fs(Query(q): Query<FsQ>) -> R<Value> {
     let path = PathBuf::from(q.path.filter(|p| !p.is_empty()).unwrap_or_else(|| "/".into()));
     let path = if path.is_dir() { path } else { PathBuf::from("/") };
-    let mut dirs: Vec<String> = std::fs::read_dir(&path)
+    let mut dirs: Vec<String> = tokio::task::block_in_place(|| std::fs::read_dir(&path))
         .map_err(err500)?
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_dir())
@@ -534,7 +567,7 @@ async fn scheduler(st: S) {
         };
         if every > 0 && !running && now().saturating_sub(last) >= every * 60 {
             st.scan.lock().unwrap().running = true;
-            run_scan(st.clone()).await;
+            run_scan_guarded(st.clone()).await;
         }
     }
 }
@@ -564,6 +597,11 @@ async fn run_ready(st: S, only: Option<String>) {
         .cloned()
         .collect();
     for it in todo {
+        // Un élément qui vient d'échouer n'est pas relancé à chaque analyse (rangement automatique) : une heure de pause.
+        // Un clic de l'utilisateur (« Réessayer ») passe toujours.
+        if only.is_none() && st.history.last_error_age(&it.nom).map_or(false, |age| age < 3600) {
+            continue;
+        }
         {
             let mut b = st.busy.lock().unwrap();
             if !b.insert(it.nom.clone()) {
@@ -682,5 +720,178 @@ async fn api_naming_preview(Json(r): Json<PreviewReq>) -> R<Value> {
             Ok((film, serie)) => Ok(Json(json!({"ok": true, "garde": false, "film": film, "serie": serie}))),
             Err(e) => Ok(Json(json!({"ok": false, "erreur": e}))),
         },
+    }
+}
+
+// ---------- protections de l'interface ----------
+
+/// Le nom d'hôte demandé est-il acceptable ? Une adresse IP, « localhost », un nom court (service Docker) ou « .local » : oui.
+/// Un nom de domaine public : seulement s'il est dans KESAL_ALLOWED_HOSTS (protège du « DNS rebinding »).
+pub fn host_allowed(host_header: &str, extra: &[String]) -> bool {
+    let h = host_header.trim();
+    let name = if let Some(rest) = h.strip_prefix('[') { rest.split(']').next().unwrap_or("") } else { h.rsplit_once(':').map(|(a, _)| a).unwrap_or(h) };
+    let name = name.to_lowercase();
+    if name.is_empty() {
+        return false;
+    }
+    if name.parse::<std::net::IpAddr>().is_ok() || name == "localhost" || !name.contains('.') {
+        return true;
+    }
+    if name.ends_with(".local") || name.ends_with(".lan") || name.ends_with(".home.arpa") {
+        return true;
+    }
+    extra.iter().any(|x| *x == name)
+}
+
+/// L'en-tête Origin (envoyé par les navigateurs) doit correspondre à l'hôte demandé : refuse les requêtes venant d'un autre site.
+pub fn origin_ok(origin: Option<&str>, host: &str) -> bool {
+    match origin {
+        None => true, // pas un navigateur (MCP, curl, scripts)
+        Some(o) => {
+            let auth = o.strip_prefix("http://").or_else(|| o.strip_prefix("https://")).unwrap_or(o);
+            auth.eq_ignore_ascii_case(host.trim())
+        }
+    }
+}
+
+fn b64_decode(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a') as u32 + 26),
+            b'0'..=b'9' => Some((c - b'0') as u32 + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    };
+    let bytes: Vec<u8> = s.bytes().filter(|c| *c != b'=').collect();
+    let mut out = Vec::new();
+    for chunk in bytes.chunks(4) {
+        let mut n = 0u32;
+        for (i, c) in chunk.iter().enumerate() {
+            n |= val(*c)? << (18 - 6 * i);
+        }
+        out.push((n >> 16) as u8);
+        if chunk.len() > 2 {
+            out.push((n >> 8) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push(n as u8);
+        }
+    }
+    Some(out)
+}
+
+/// Comparaison en temps constant (évite de deviner le mot de passe par le temps de réponse).
+fn same_secret(a: &[u8], b: &[u8]) -> bool {
+    let mut d = (a.len() ^ b.len()) as u8;
+    for i in 0..a.len().max(b.len()) {
+        d |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
+    }
+    d == 0
+}
+
+fn basic_password_ok(auth_header: Option<&str>, password: &str) -> bool {
+    let Some(h) = auth_header else { return false };
+    let Some(b) = h.strip_prefix("Basic ").or_else(|| h.strip_prefix("basic ")) else { return false };
+    let Some(raw) = b64_decode(b.trim()) else { return false };
+    let text = String::from_utf8_lossy(&raw);
+    let pass = text.split_once(':').map(|x| x.1).unwrap_or(&text);
+    same_secret(pass.as_bytes(), password.as_bytes())
+}
+
+fn deny(code: StatusCode, msg: &str) -> Response {
+    (code, msg.to_string()).into_response()
+}
+
+async fn guard(State(st): State<S>, req: Request, next: Next) -> Response {
+    // on copie les en-têtes utiles avant toute attente (la requête ne doit pas être empruntée pendant `.await`)
+    let (host, auth, origin, mutating) = {
+        let get = |n: header::HeaderName| req.headers().get(n).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+        (get(header::HOST).unwrap_or_default(), get(header::AUTHORIZATION), get(header::ORIGIN), !matches!(*req.method(), axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS))
+    };
+    if !host_allowed(&host, &st.allowed_hosts) {
+        return deny(StatusCode::FORBIDDEN, "Nom d'hôte non autorisé. Pour y accéder par un nom de domaine, ajoutez-le à KESAL_ALLOWED_HOSTS.");
+    }
+    if let Some(pw) = &st.password {
+        if !basic_password_ok(auth.as_deref(), pw) {
+            let mut r = deny(StatusCode::UNAUTHORIZED, "Mot de passe requis.");
+            r.headers_mut().insert(header::WWW_AUTHENTICATE, header::HeaderValue::from_static("Basic realm=\"kesal-rangeur\", charset=\"UTF-8\""));
+            return r;
+        }
+    }
+    if mutating && !origin_ok(origin.as_deref(), &host) {
+        return deny(StatusCode::FORBIDDEN, "Requête refusée : elle ne vient pas de cette interface.");
+    }
+    next.run(req).await
+}
+
+/// Lance une analyse en la protégeant d'un plantage : l'état « en cours » ne reste jamais bloqué.
+async fn run_scan_guarded(st: S) {
+    let st2 = st.clone();
+    if let Err(e) = tokio::spawn(run_scan(st2)).await {
+        {
+            let mut sc = st.scan.lock().unwrap();
+            sc.running = false;
+            sc.error = Some("l'analyse s'est interrompue de façon inattendue".into());
+        }
+        st.log("erreur", format!("Analyse interrompue : {e}"));
+    }
+}
+
+/// Retire de temps en temps les dossiers provisoires abandonnés (arrêt brutal pendant une copie).
+async fn sweep_loop(st: S) {
+    loop {
+        let (roots, essai) = {
+            let c = st.cfg.read().await;
+            let mut r: Vec<PathBuf> = c.destinations.values().cloned().collect();
+            r.extend(c.film_libraries.iter().cloned());
+            (r, c.essai)
+        };
+        if !essai {
+            if let Ok(n) = tokio::task::spawn_blocking(move || exec::sweep_staging(&roots, 1800)).await {
+                if n > 0 {
+                    st.log("info", format!("{n} dossier(s) provisoire(s) abandonné(s) nettoyé(s)"));
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hotes_autorises() {
+        let extra = vec!["range.example.org".to_string()];
+        for h in ["192.168.1.40:3050", "127.0.0.1:3050", "localhost:3050", "[::1]:3050", "rangeur:3050", "nas.local", "mon-nas.lan:3050", "range.example.org", "RANGE.example.org:443"] {
+            assert!(host_allowed(h, &extra), "{h} devrait être autorisé");
+        }
+        for h in ["evil.com", "evil.com:3050", "192.168.1.40.evil.com", "attacker.example.net:3050", ""] {
+            assert!(!host_allowed(h, &extra), "{h} devrait être refusé");
+        }
+    }
+
+    #[test]
+    fn origine_doit_correspondre() {
+        assert!(origin_ok(None, "192.168.1.40:3050"));
+        assert!(origin_ok(Some("http://192.168.1.40:3050"), "192.168.1.40:3050"));
+        assert!(!origin_ok(Some("http://evil.com"), "192.168.1.40:3050"));
+        assert!(!origin_ok(Some("https://192.168.1.40:3050.evil.com"), "192.168.1.40:3050"));
+    }
+
+    #[test]
+    fn mot_de_passe_basic() {
+        // « kev:secret » en base64 = a2V2OnNlY3JldA==
+        assert!(basic_password_ok(Some("Basic a2V2OnNlY3JldA=="), "secret"));
+        assert!(!basic_password_ok(Some("Basic a2V2OnNlY3JldA=="), "autre"));
+        assert!(!basic_password_ok(None, "secret"));
+        assert!(!basic_password_ok(Some("Bearer xxx"), "secret"));
+        assert!(!basic_password_ok(Some("Basic !!!"), "secret"));
+        assert_eq!(b64_decode("YWJj").unwrap(), b"abc");
+        assert_eq!(b64_decode("YWI=").unwrap(), b"ab");
     }
 }

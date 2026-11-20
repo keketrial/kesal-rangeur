@@ -5,9 +5,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# droits minimaux par défaut ; chaque job réclame seulement ce dont il a besoin
 permissions:
-  contents: write   # créer la publication GitHub
-  packages: write   # pousser l'image Docker sur ghcr.io
+  contents: read
 
 jobs:
   binaires:
@@ -50,6 +50,8 @@ jobs:
   publication:
     needs: binaires
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # créer la publication GitHub
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -66,6 +68,9 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # pousser l'image Docker sur ghcr.io
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3

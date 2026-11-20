@@ -283,7 +283,7 @@ async function vLibrary(v) {
 // ---------- Réglages ----------
 async function vSettings(v) {
   const s = S.settings = await api("/api/settings");
-  const secTag = (x) => x.ok ? `<span class="tag ok">enregistrée (…${esc(x.fin)})</span>` : `<span class="tag warn">non renseignée</span>`;
+  const secTag = (x) => x.ok ? `<span class="tag ok">enregistrée</span>` : `<span class="tag warn">non renseignée</span>`;
   v.innerHTML = `<h2>Réglages</h2><p class="lead">Tout se règle ici. Le bouton <b>?</b> à côté de chaque réglage explique à quoi il sert.</p>
   ${s.dossiers_introuvables.length ? `<div class="banner"><span>⚠️</span><span>Dossiers introuvables sur cette machine : ${s.dossiers_introuvables.map((p) => `<span class="mono">${esc(p)}</span>`).join(", ")}</span></div>` : ""}
   <div class="card"><h3 style="margin-top:0">TMDB — titres et affiches ${helpBtn("tmdb")}</h3>
@@ -413,7 +413,7 @@ async function save(quiet) {
     tmdb_key: $("#s_tmdb").value, plex_token: $("#s_plextok").value, jellyfin_key: $("#s_jftok").value, ha_token: $("#s_hatok").value };
   if (S.status && S.status.essai && !body.essai &&
       !confirm("Vous allez DÉSACTIVER l'essai à blanc.\n\nÀ partir de maintenant, « Ranger » copiera réellement dans votre bibliothèque (chaque rangement reste annulable depuis l'Historique).\n\nContinuer ?")) { $("#s_essai").checked = true; return; }
-  try { await api("/api/settings", { method: "POST", body }); if (!quiet) toast(t("saved")); invalidate("accueil", "plan", "trier", "historique", "bibliotheque"); await refreshStatus(); if (!quiet) vSettings(pane("reglages")); }
+  try { const res = await api("/api/settings", { method: "POST", body }); if (res.jetons_effaces && res.jetons_effaces.length) toast("Adresse modifiée : saisissez à nouveau le jeton de " + res.jetons_effaces.join(", "));  if (!quiet) toast(t("saved")); invalidate("accueil", "plan", "trier", "historique", "bibliotheque"); await refreshStatus(); if (!quiet) vSettings(pane("reglages")); }
   catch (e) { toast("Erreur : " + e.message); }
 }
 

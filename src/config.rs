@@ -125,23 +125,45 @@ pub struct Secrets {
     pub ha: String,
 }
 
+/// Écrit un fichier de façon atomique (fichier temporaire puis renommage) ; `private` : droits 600 dès la création.
+pub fn write_atomic(path: &Path, data: &[u8], private: bool) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = path.with_extension("tmp-ecriture");
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    if private {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let _ = private;
+    let mut f = opts.open(&tmp)?;
+    f.write_all(data)?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path)
+}
+
 impl Secrets {
     pub fn path(data_dir: &Path) -> PathBuf {
         data_dir.join("secrets.json")
     }
     pub fn load(data_dir: &Path) -> Secrets {
-        std::fs::read_to_string(Self::path(data_dir)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+        let p = Self::path(data_dir);
+        match std::fs::read_to_string(&p) {
+            Ok(t) => serde_json::from_str(&t).unwrap_or_else(|e| {
+                // fichier abîmé : mis de côté (jamais écrasé par un fichier vide)
+                let bak = p.with_extension(format!("json.corrompu-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)));
+                let _ = std::fs::rename(&p, &bak);
+                eprintln!("[erreur] secrets.json illisible ({e}) : conservé dans {}", bak.display());
+                Secrets::default()
+            }),
+            Err(_) => Secrets::default(),
+        }
     }
     pub fn save(&self, data_dir: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(data_dir)?;
-        let p = Self::path(data_dir);
-        std::fs::write(&p, serde_json::to_string_pretty(self).unwrap_or_default())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(())
+        write_atomic(&Self::path(data_dir), serde_json::to_string_pretty(self).unwrap_or_default().as_bytes(), true)
     }
 }
 
@@ -169,7 +191,7 @@ impl Config {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, toml::to_string_pretty(self)?)?;
+        write_atomic(path, toml::to_string_pretty(self)?.as_bytes(), false)?;
         Ok(())
     }
     pub fn load(path: &Path) -> anyhow::Result<Config> {

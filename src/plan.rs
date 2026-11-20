@@ -25,18 +25,37 @@ pub enum Settle {
     Attente { minutes: u64 },
 }
 
+#[cfg(unix)]
+fn ctime_of(md: &std::fs::Metadata) -> Option<SystemTime> {
+    use std::os::unix::fs::MetadataExt;
+    let secs = u64::try_from(md.ctime()).ok()?;
+    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
+}
+#[cfg(not(unix))]
+fn ctime_of(_md: &std::fs::Metadata) -> Option<SystemTime> {
+    None
+}
+
 /// Un élément est prêt si aucun fichier temporaire n'est présent et que rien n'a changé depuis `settle_minutes`.
 pub fn check_settled(path: &Path, settle_minutes: u64) -> Settle {
     let mut newest = SystemTime::UNIX_EPOCH;
-    for e in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+    for e in WalkDir::new(path) {
+        let Ok(e) = e else {
+            return Settle::Transfert { fichier: "dossier illisible (droits ?)".into() };
+        };
         let name = e.file_name().to_string_lossy().to_lowercase();
         if let Some(ext) = name.rsplit_once('.').map(|x| x.1) {
             if TEMP_EXT.contains(&ext) {
                 return Settle::Transfert { fichier: e.file_name().to_string_lossy().to_string() };
             }
         }
-        if let Ok(m) = e.metadata().map_err(std::io::Error::from).and_then(|m| m.modified()) {
-            newest = newest.max(m);
+        if let Ok(md) = e.metadata() {
+            if let Ok(m) = md.modified() {
+                // Resilio garde la date d'origine : une date dans le futur (horloge de la seedbox en avance) ne doit pas bloquer
+                // éternellement. On prend alors la date de changement locale (ctime), qui est le vrai moment d'arrivée.
+                let m = if m > SystemTime::now() + Duration::from_secs(60) { ctime_of(&md).unwrap_or_else(SystemTime::now) } else { m };
+                newest = newest.max(m);
+            }
         }
     }
     let age = SystemTime::now().duration_since(newest).unwrap_or(Duration::ZERO);
@@ -140,12 +159,17 @@ impl MovieIndex {
 
 /// Nettoie un nom pour en faire un nom de dossier.
 pub fn safe_name(s: &str) -> String {
-    s.chars()
+    let cleaned = s
+        .chars()
         .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { ' ' } else { c })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+    // Windows/SMB : pas de point ni d'espace final, pas de nom réservé (CON, NUL…)
+    let cleaned = cleaned.trim_end_matches(['.', ' ']).to_string();
+    const RESERVED: &[&str] = &["con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "lpt1", "lpt2", "lpt3"];
+    if RESERVED.contains(&cleaned.to_lowercase().as_str()) { format!("_{cleaned}") } else { cleaned }
 }
 
 /// Remplace le numéro de saison `from` par `to` dans un nom (S02E01 → S01E01, S02 → S01).
@@ -221,6 +245,11 @@ pub fn choice_key(rel: &Release) -> String {
     format!("{}|{}|{}", norm::key(&rel.title), rel.year.map(|y| y.to_string()).unwrap_or_default(), kind)
 }
 
+/// Clé « série » d'un choix (sans la saison) : réutilisée si la fiche choisie possède la saison qui arrive.
+pub fn series_key(rel: &Release) -> String {
+    format!("{}|{}|tv", norm::key(&rel.title), rel.year.map(|y| y.to_string()).unwrap_or_default())
+}
+
 pub struct Planner {
     pub cfg: Arc<Config>,
     pub tmdb: Arc<Tmdb>,
@@ -273,6 +302,9 @@ impl Planner {
 
     pub fn set_choice(&self, rel: &Release, ch: Choice) {
         let mut m = self.choices.lock().unwrap();
+        if ch.media == Media::Tv && rel.seasons.len() == 1 {
+            m.insert(series_key(rel), ch.clone()); // la prochaine saison de cette série ne redemandera pas
+        }
         m.insert(choice_key(rel), ch);
         if let Ok(t) = serde_json::to_string_pretty(&*m) {
             let _ = std::fs::create_dir_all(&self.cfg.data_dir);
@@ -312,6 +344,22 @@ impl Planner {
         best.map(|(e, _)| e)
     }
 
+    /// Film déjà présent ? On essaie l'année de TMDB puis celle du nom de fichier (les fichiers portent souvent une autre année).
+    fn find_movie(&self, names: &[&str], tmdb_year: Option<u16>, rel_year: Option<u16>) -> Option<&(String, Option<u16>, u32, PathBuf)> {
+        self.movies.find(names, tmdb_year.or(rel_year)).or_else(|| match (rel_year, tmdb_year) {
+            (Some(r), Some(t)) if r != t => self.movies.find(names, Some(r)),
+            _ => None,
+        })
+    }
+
+    /// Même chose pour les dossiers de série.
+    fn find_series_years(&self, names: &[&str], tmdb_year: Option<u16>, rel_year: Option<u16>) -> Option<&LibEntry> {
+        self.find_series(names, tmdb_year.or(rel_year)).or_else(|| match (rel_year, tmdb_year) {
+            (Some(r), Some(t)) if r != t => self.find_series(names, Some(r)),
+            _ => None,
+        })
+    }
+
     pub async fn plan_input(&self, input: &Input) -> anyhow::Result<Vec<Item>> {
         let mut names: Vec<_> = std::fs::read_dir(&input.path)?.filter_map(|e| e.ok()).collect();
         names.sort_by_key(|e| e.file_name());
@@ -339,11 +387,15 @@ impl Planner {
             item.decision = Decision::Ignorer { raison: "fichier système".into() };
             return item;
         }
+        if std::fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            item.decision = Decision::Ignorer { raison: "lien symbolique (ignoré par sécurité)".into() };
+            return item;
+        }
         if path.is_file() && !path.extension().and_then(|x| x.to_str()).map_or(false, parser::is_video_ext) {
             item.decision = Decision::Ignorer { raison: "pas une vidéo".into() };
             return item;
         }
-        match check_settled(path, input.settle_minutes) {
+        match tokio::task::block_in_place(|| check_settled(path, input.settle_minutes)) {
             Settle::Pret => {}
             Settle::Transfert { fichier } => {
                 item.decision = Decision::Attendre { raison: format!("transfert en cours ({fichier})") };
@@ -360,7 +412,7 @@ impl Planner {
 
     /// Film : nom et dossier calculés d'après le format choisi.
     fn name_movie(&self, item: &Item, c: &Candidate, fmt: &Formats, dest_root: &Path, props: &[String]) -> Decision {
-        let files = list_files(&item.source);
+        let files = tokio::task::block_in_place(|| list_files(&item.source));
         let (map, _ignored) = match naming::map_movie(&files, fmt, &c.title, c.year, &item.release) {
             Ok(x) => x,
             Err(e) => return Decision::ATrier { raison: format!("nommage impossible : {e}"), propositions: props.to_vec() },
@@ -381,7 +433,7 @@ impl Planner {
     /// Série : chaque épisode est placé dans son dossier de saison avec son nouveau nom (titres d'épisodes TMDB).
     #[allow(clippy::too_many_arguments)]
     async fn name_series(&self, item: &Item, c: &Candidate, fmt: &Formats, base: PathBuf, nouveau: bool, renum: Option<(u16, u16)>, existing_style: Option<String>, props: &[String]) -> Decision {
-        let files: Vec<PathBuf> = list_files(&item.source).into_iter().map(|(p, _)| p).collect();
+        let files: Vec<PathBuf> = tokio::task::block_in_place(|| list_files(&item.source)).into_iter().map(|(p, _)| p).collect();
         // saisons dont on a besoin (après renumérotation) pour récupérer les titres d'épisodes
         let hint = if let [s] = item.release.seasons.as_slice() { Some(*s) } else { None };
         let mut wanted = std::collections::BTreeSet::new();
@@ -416,8 +468,36 @@ impl Planner {
         if rel.title.is_empty() {
             return Decision::ATrier { raison: "titre illisible dans le nom".into(), propositions: vec![] };
         }
-        // Un choix déjà fait à la main passe avant tout.
-        let choice = self.choices.lock().unwrap().get(&choice_key(&rel)).cloned();
+        // Un choix déjà fait à la main passe avant tout (par saison, ou pour la série si la fiche a cette saison).
+        let (per_season, per_series) = {
+            let m = self.choices.lock().unwrap();
+            (m.get(&choice_key(&rel)).cloned(), m.get(&series_key(&rel)).cloned())
+        };
+        let mut choice = per_season;
+        if choice.is_none() {
+            if let (Some(ch), [season]) = (per_series.as_ref(), rel.seasons.as_slice()) {
+                if let Ok(list) = self.tmdb.tv_seasons(ch.id).await {
+                    if list.contains(season) {
+                        choice = per_series.clone();
+                    }
+                }
+            }
+        }
+        // Déjà dans la bibliothèque ? Le nom et l'année suffisent, sans même interroger TMDB (et sans ambiguïté d'homonymes).
+        if choice.is_none() && per_series.is_none() {
+            if rel.is_movie_like() {
+                if let Some((_, _, q, p)) = self.movies.find(&[rel.title.as_str()], rel.year) {
+                    let raison = if rel.quality_score() > *q + 2 { "déjà présent (la nouvelle version est de meilleure qualité)" } else { "déjà présent" };
+                    return Decision::Doublon { existant: p.clone(), raison: raison.into() };
+                }
+            } else if !rel.seasons.is_empty() && rel.episodes.is_empty() {
+                if let Some(lib) = self.find_series(&[rel.title.as_str()], rel.year) {
+                    if rel.seasons.iter().all(|s| lib.seasons.contains(s)) {
+                        return Decision::Doublon { existant: lib.path.clone(), raison: format!("saison(s) {:?} déjà présente(s)", rel.seasons) };
+                    }
+                }
+            }
+        }
         let cands: Vec<Candidate> = if let Some(ch) = &choice {
             match self.tmdb.details(ch.media, ch.id).await {
                 Ok(mut c) => {
@@ -439,10 +519,20 @@ impl Planner {
             .take(4)
             .map(|c| format!("{} ({}) [{}] id {}", c.title, c.year.map(|y| y.to_string()).unwrap_or("?".into()), if c.media == Media::Tv { "série" } else { "film" }, c.id))
             .collect();
-        if cands.is_empty() {
-            return Decision::ATrier { raison: "aucune fiche TMDB trouvée".into(), propositions: vec![] };
-        }
-        if !tmdb::is_confident(&cands) {
+        if cands.is_empty() || !tmdb::is_confident(&cands) {
+            // Série dont le dossier existe déjà dans la bibliothèque : lui seul tranche (homonymes, titre introuvable…).
+            // Seulement si on garde les noms d'origine : renommer exige la bonne fiche pour les titres d'épisodes.
+            if rel.is_series_like() && self.cfg.naming.formats().is_none() {
+                if let Some(lib) = self.find_series(&[rel.title.as_str()], rel.year) {
+                    if !rel.seasons.is_empty() && rel.episodes.is_empty() && rel.seasons.iter().all(|s| lib.seasons.contains(s)) {
+                        return Decision::Doublon { existant: lib.path.clone(), raison: format!("saison(s) {:?} déjà présente(s)", rel.seasons) };
+                    }
+                    return Decision::Ranger { vers: lib.path.join(&item.nom), nouveau_dossier: false, renumerotation: None, renommages: vec![], fichiers: vec![] };
+                }
+            }
+            if cands.is_empty() {
+                return Decision::ATrier { raison: "aucune fiche TMDB trouvée".into(), propositions: vec![] };
+            }
             return Decision::ATrier { raison: "plusieurs fiches possibles ou titre trop différent".into(), propositions: props };
         }
         let c = &cands[0];
@@ -455,15 +545,15 @@ impl Planner {
             cat = fc;
         }
         item.reconnu = Some(Reconnu { tmdb_id: c.id, media: c.media, titre: c.title.clone(), titre_original: c.original_title.clone(), annee: c.year, categorie: cat, affiche: c.poster.clone() });
-        let Some(dest_root) = self.cfg.destinations.get(&cat) else {
-            return Decision::ATrier { raison: format!("pas de dossier de destination pour « {} »", cat.label()), propositions: props };
-        };
+        let dest_root = self.cfg.destinations.get(&cat);
+        let no_dest = || Decision::ATrier { raison: format!("pas de dossier de destination pour « {} »", cat.label()), propositions: props.clone() };
 
         if c.media == Media::Movie {
-            if let Some((_, _, q, p)) = self.movies.find(&names, c.year.or(rel.year)) {
+            if let Some((_, _, q, p)) = self.find_movie(&names, c.year, rel.year) {
                 let raison = if rel.quality_score() > *q + 2 { "déjà présent (la nouvelle version est de meilleure qualité)" } else { "déjà présent" };
                 return Decision::Doublon { existant: p.clone(), raison: raison.into() };
             }
+            let Some(dest_root) = dest_root else { return no_dest() };
             if let Some(fmt) = self.cfg.naming.formats() {
                 return self.name_movie(item, c, &fmt, dest_root, &props);
             }
@@ -496,7 +586,7 @@ impl Planner {
             Some((from, to)) => (renumber_season(&item.nom, from, to), renames_for(&item.source, from, to)),
             None => (item.nom.clone(), vec![]),
         };
-        match self.find_series(&names, c.year.or(rel.year)) {
+        match self.find_series_years(&names, c.year, rel.year) {
             Some(lib) => {
                 if !seasons.is_empty() && rel.episodes.is_empty() && seasons.iter().all(|s| lib.seasons.contains(s)) {
                     return Decision::Doublon { existant: lib.path.clone(), raison: format!("saison(s) {seasons:?} déjà présente(s)") };
@@ -505,7 +595,16 @@ impl Planner {
                     return Decision::Doublon { existant: lib.path.clone(), raison: "épisode déjà présent".into() };
                 }
                 if seasons.is_empty() && rel.complete && !lib.seasons.is_empty() {
-                    return Decision::ATrier { raison: format!("intégrale reçue, mais la série existe déjà (saisons {:?})", lib.seasons.iter().collect::<Vec<_>>()), propositions: vec![lib.path.display().to_string()] };
+                    // intégrale : déjà présente si la bibliothèque a toutes les saisons de la fiche TMDB
+                    let have: Vec<u16> = lib.seasons.iter().copied().collect();
+                    return match self.tmdb.tv_seasons(c.id).await {
+                        Ok(all) if !all.is_empty() && all.iter().all(|s| lib.seasons.contains(s)) => Decision::Doublon { existant: lib.path.clone(), raison: format!("intégrale déjà présente (saisons {have:?})") },
+                        Ok(all) => {
+                            let missing: Vec<u16> = all.into_iter().filter(|s| !lib.seasons.contains(s)).collect();
+                            Decision::ATrier { raison: format!("intégrale reçue ; la série existe déjà (saisons {have:?}, il manque {missing:?})"), propositions: vec![lib.path.display().to_string()] }
+                        }
+                        Err(_) => Decision::ATrier { raison: format!("intégrale reçue, mais la série existe déjà (saisons {have:?})"), propositions: vec![lib.path.display().to_string()] },
+                    };
                 }
                 if let Some(fmt) = self.cfg.naming.formats() {
                     return self.name_series(item, c, &fmt, lib.path.clone(), false, renum, Some(naming::detect_season_style(&lib.path)).flatten(), &props).await;
@@ -513,6 +612,7 @@ impl Planner {
                 Decision::Ranger { vers: lib.path.join(&final_name), nouveau_dossier: false, renumerotation: renum, renommages, fichiers: vec![] }
             }
             None => {
+                let Some(dest_root) = dest_root else { return no_dest() };
                 let dir = match c.year {
                     Some(y) => format!("{} ({y})", safe_name(&c.title)),
                     None => safe_name(&c.title),
@@ -531,6 +631,30 @@ impl Planner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn noms_windows() {
+        assert_eq!(safe_name("Titre..."), "Titre");
+        assert_eq!(safe_name("Qui ?  "), "Qui");
+        assert_eq!(safe_name("CON"), "_CON");
+        assert_eq!(safe_name("Mission: Impossible"), "Mission Impossible");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn date_dans_le_futur_ne_bloque_pas_a_jamais() {
+        let t = tempfile::tempdir().unwrap();
+        let f = t.path().join("a.mkv");
+        std::fs::write(&f, "x").unwrap();
+        // ctime = maintenant (fichier tout juste créé) : le futur lointain de mtime est ignoré, on attend donc « normalement »
+        let fut = SystemTime::now() + Duration::from_secs(6 * 3600);
+        std::fs::OpenOptions::new().write(true).open(&f).unwrap().set_modified(fut).unwrap();
+        match check_settled(&f, 30) {
+            Settle::Attente { minutes } => assert!(minutes <= 30, "attente bornée par le délai : {minutes}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(check_settled(&f, 0), Settle::Pret), "avec 0 minute de calme, un fichier à date future est prêt");
+    }
 
     #[test]
     fn choix_retenu_distingue_les_saisons() {

@@ -326,6 +326,7 @@ pub fn map_series(files: &[PathBuf], i: &SeriesIn) -> Result<(Vec<(PathBuf, Path
             return Err(format!("deux fichiers auraient le même nom : {}", d.display()));
         }
     }
+    check_len(&out)?;
     Ok((out, ignored))
 }
 
@@ -333,6 +334,19 @@ pub fn map_series(files: &[PathBuf], i: &SeriesIn) -> Result<(Vec<(PathBuf, Path
 fn part_of(name: &str) -> Option<u32> {
     let re = Regex::new(r"(?i)(?:^|[ ._\-\[(])(?:part|pt|cd|disc|disk)[ ._\-]?(\d{1,2})(?:[ ._\-\])]|$)").unwrap();
     re.captures(name).and_then(|c| c[1].parse().ok())
+}
+
+/// Aucun élément de chemin ne doit dépasser 255 octets (limite de la plupart des systèmes de fichiers).
+fn check_len(map: &[(PathBuf, PathBuf)]) -> Result<(), String> {
+    for (_, d) in map {
+        for c in d.components() {
+            let n = c.as_os_str().len();
+            if n > 255 {
+                return Err(format!("nom trop long ({n} octets, maximum 255) : {}", c.as_os_str().to_string_lossy().chars().take(60).collect::<String>()));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Film : le plus gros fichier vidéo donne le nom ; les sous-titres le suivent. Un film en plusieurs parties
@@ -389,6 +403,7 @@ pub fn map_movie(files: &[(PathBuf, u64)], fmt: &Formats, title: &str, year: Opt
             return Err(format!("deux fichiers auraient le même nom : {}", d.display()));
         }
     }
+    check_len(&out)?;
     Ok((out, ignored))
 }
 
@@ -569,6 +584,16 @@ mod tests {
         // deux fichiers qui prétendent être la même partie
         let dup = vec![(PathBuf::from("Film.CD1.mkv"), 700_000_000), (PathBuf::from("Film.part1.mkv"), 690_000_000)];
         assert!(map_movie(&dup, &fmt, "Film", Some(2000), &rel).is_err());
+    }
+
+    #[test]
+    fn nom_trop_long_refuse() {
+        let rel = parser::parse("Film.2000.1080p-X");
+        let fmt = fmt_plex();
+        let long = "Un titre extrêmement long ".repeat(12);
+        let files = vec![(PathBuf::from("film.mkv"), 1_000_000)];
+        let e = map_movie(&files, &fmt, &long, Some(2000), &rel).unwrap_err();
+        assert!(e.contains("trop long"), "{e}");
     }
 
     #[test]

@@ -24,12 +24,15 @@ pub struct Release {
     pub group: Option<String>,
     /// Le nom contient « DOC » / « DOCU » : indice pour classer en documentaire.
     pub doc_hint: bool,
+    /// Émission quotidienne : « 2024.05.17 » (année, mois, jour) au lieu de SxxEyy.
+    #[serde(default)]
+    pub daily: bool,
 }
 
 impl Release {
     /// Le nom évoque une série (saison, épisode, pack).
     pub fn is_series_like(&self) -> bool {
-        !self.seasons.is_empty() || !self.episodes.is_empty() || self.complete
+        !self.seasons.is_empty() || !self.episodes.is_empty() || self.complete || self.daily
     }
     /// Le nom évoque un film (année, pas de saison).
     pub fn is_movie_like(&self) -> bool {
@@ -69,20 +72,20 @@ pub fn is_video_ext(ext: &str) -> bool {
 fn re_season_ep() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
-        Regex::new(r"(?i)^s(\d{1,3})(?:e(\d{1,4})(?:e?-?e?(\d{1,4}))?)?$").unwrap()
+        Regex::new(r"(?i)^s([0-9]{1,3})(?:e([0-9]{1,4})(?:e?-?e?([0-9]{1,4}))?)?$").unwrap()
     })
 }
 fn re_x_ep() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"(?i)^(\d{1,2})x(\d{2,3})$").unwrap())
+    R.get_or_init(|| Regex::new(r"(?i)^([0-9]{1,2})x([0-9]{2,3})$").unwrap())
 }
 fn re_resolution() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"(?i)^(\d{3,4})[pi]$").unwrap())
+    R.get_or_init(|| Regex::new(r"(?i)^([0-9]{3,4})[pi]$").unwrap())
 }
 fn re_year() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"^(19\d\d|20\d\d)$").unwrap())
+    R.get_or_init(|| Regex::new(r"^(19[0-9]{2}|20[0-2][0-9])$").unwrap())
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -112,21 +115,27 @@ fn classify(t: &str) -> Tok {
         }
     }
     if re_year().is_match(&l) {
-        return Tok::Year(l.parse().unwrap());
+        if let Ok(y) = l.parse() {
+            return Tok::Year(y);
+        }
     }
     if let Some(c) = re_season_ep().captures(&l) {
-        let s = c[1].parse().unwrap();
-        let e = c.get(2).map(|m| m.as_str().parse().unwrap());
-        let e2 = c.get(3).map(|m| m.as_str().parse().unwrap());
-        return Tok::SeasonEp(s, e, e2);
+        if let Ok(s) = c[1].parse() {
+            let e = c.get(2).and_then(|m| m.as_str().parse().ok());
+            let e2 = c.get(3).and_then(|m| m.as_str().parse().ok());
+            return Tok::SeasonEp(s, e, e2);
+        }
     }
     if let Some(c) = re_x_ep().captures(&l) {
-        return Tok::SeasonEp(c[1].parse().unwrap(), Some(c[2].parse().unwrap()), None);
+        if let (Ok(a), Ok(b)) = (c[1].parse(), c[2].parse()) {
+            return Tok::SeasonEp(a, Some(b), None);
+        }
     }
     if re_resolution().is_match(&l) {
-        let n: u32 = l[..l.len() - 1].parse().unwrap();
-        if n >= 360 {
-            return Tok::Resolution(format!("{n}p"));
+        if let Ok(n) = l[..l.len() - 1].parse::<u32>() {
+            if n >= 360 {
+                return Tok::Resolution(format!("{n}p"));
+            }
         }
     }
     match l.as_str() {
@@ -174,7 +183,7 @@ fn classify(t: &str) -> Tok {
 }
 
 fn tokenize(s: &str) -> Vec<String> {
-    s.split(|c: char| matches!(c, '.' | '_' | ' ' | '-' | '[' | ']' | '(' | ')' | '{' | '}' | '+'))
+    s.split(|c: char| c.is_whitespace() || matches!(c, '.' | '_' | '-' | '[' | ']' | '(' | ')' | '{' | '}' | '+'))
         .filter(|t| !t.is_empty())
         .map(|t| t.to_string())
         .collect()
@@ -262,6 +271,13 @@ pub fn parse(name: &str) -> Release {
     while i < toks.len() {
         match &kinds[i] {
             Tok::Year(y) => {
+                // « 2024.05.17 » : année puis mois puis jour → émission quotidienne, pas un film
+                let num = |k: usize| toks.get(k).filter(|t| t.len() == 2 && t.chars().all(|c| c.is_ascii_digit())).and_then(|t| t.parse::<u8>().ok());
+                if let (Some(m), Some(d)) = (num(i + 1), num(i + 2)) {
+                    if (1..=12).contains(&m) && (1..=31).contains(&d) {
+                        r.daily = true;
+                    }
+                }
                 if r.year.is_none() {
                     r.year = Some(*y);
                 }
@@ -270,11 +286,17 @@ pub fn parse(name: &str) -> Release {
                 season_marks.push(*s);
                 if let Some(e) = e {
                     r.episodes.push(*e);
-                    if let Some(e2) = e2 {
-                        if e2 > e {
-                            for k in (*e + 1)..=*e2 {
-                                r.episodes.push(k);
-                            }
+                    // « S01E01-E03 » : le tiret a séparé « E03 » dans le mot suivant
+                    let mut last = e2.unwrap_or(*e);
+                    if e2.is_none() && kinds.get(i + 1) == Some(&Tok::Word) {
+                        if let Some(n) = toks[i + 1].to_lowercase().strip_prefix('e').filter(|x| !x.is_empty() && x.chars().all(|c| c.is_ascii_digit())).and_then(|x| x.parse::<u16>().ok()) {
+                            last = n;
+                            i += 1;
+                        }
+                    }
+                    if last > *e && last - *e <= 30 {
+                        for k in (*e + 1)..=last {
+                            r.episodes.push(k);
                         }
                     }
                 }
@@ -501,6 +523,46 @@ mod tests {
         let r = parse("Caméra.Café.L'intégrale.French.Dvdrip");
         assert_eq!(r.title, "Caméra Café");
         assert!(r.complete);
+    }
+
+    #[test]
+    fn espace_insecable() {
+        let r = parse("Manifest Saison\u{a0}4");
+        assert_eq!(r.title, "Manifest");
+        assert_eq!(r.seasons, vec![4]);
+        let r = parse("Show\u{2009}Name.S01.1080p");
+        assert_eq!(r.title, "Show Name");
+    }
+
+    #[test]
+    fn chiffres_unicode_ne_font_pas_paniquer() {
+        for n in ["Show.S٣.mkv", "Show.s１２e１.mkv", "Movie.20２４.mkv", "Movie.١٠٨٠p.mkv", "Show.S01E٣.mkv", "１０８０p"] {
+            let _ = parse(n); // ne doit jamais paniquer
+        }
+    }
+
+    #[test]
+    fn plage_d_episodes() {
+        assert_eq!(parse("Show.S01E01-E03.1080p.mkv").episodes, vec![1, 2, 3]);
+        assert_eq!(parse("Show.S01E01E02.1080p.mkv").episodes, vec![1, 2]);
+        assert_eq!(parse("Show.S01E05.1080p.mkv").episodes, vec![5]);
+    }
+
+    #[test]
+    fn annee_impossible_reste_dans_le_titre() {
+        let r = parse("Blade.Runner.2049.1080p.mkv");
+        assert_eq!(r.title, "Blade Runner 2049");
+        assert_eq!(r.year, None);
+        let r = parse("Blade.Runner.2049.2017.1080p.mkv");
+        assert_eq!(r.title, "Blade Runner 2049");
+        assert_eq!(r.year, Some(2017));
+    }
+
+    #[test]
+    fn emission_quotidienne() {
+        let r = parse("Quotidien.2024.05.17.720p.WEB.mkv");
+        assert!(r.daily && r.is_series_like() && !r.is_movie_like());
+        assert!(!parse("Film.2024.1080p.mkv").daily);
     }
 
     #[test]

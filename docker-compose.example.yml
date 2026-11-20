@@ -12,3 +12,8 @@ services:
       # UN SEUL montage pour le dossier d'arrivée ET les dossiers de destination :
       # c'est ce qui permet les copies instantanées (reflink / lien physique) sans doubler l'espace.
       - /volume1/NAS5BAIES/VOD:/vod
+    environment:
+      # Fortement conseillé : protège toute l'interface (n'importe quel identifiant, ce mot de passe).
+      # KESAL_PASSWORD: "choisissez-en-un-long"
+      # Si vous accédez par un nom de domaine (tunnel, reverse proxy) :
+      # KESAL_ALLOWED_HOSTS: "range.example.org"
