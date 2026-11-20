@@ -206,17 +206,19 @@ const fmtSize = (n) => n > 1e9 ? (n / 1e9).toFixed(2) + " Go" : n > 1e6 ? (n / 1
 async function vHistory(v) {
   const h = (await api("/api/history")).entrees;
   const real = S.status && !S.status.essai;
+  const okNoms = new Set(h.filter((e) => e.statut === "fait").map((e) => e.nom));
+  const resolved = (e) => e.statut === "erreur" && okNoms.has(e.nom);
   v.innerHTML = `<h2>Historique ${helpBtn("historique")}</h2><p class="lead">Chaque rangement : avant → après, avec un bouton pour l'annuler.</p>
   ${h.length === 0 ? `<div class="empty"><b>Aucun rangement pour l'instant</b>En mode essai à blanc, rien n'est exécuté, donc rien n'est écrit ici.</div>` :
     h.map((e) => `<div class="card"><div class="row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-      <span class="tag ${e.statut === "fait" ? "ok" : e.statut === "erreur" ? "bad" : ""}">${e.statut === "fait" ? "Rangé" : e.statut === "erreur" ? "Erreur" : "Annulé"}</span>
+      <span class="tag ${e.statut === "fait" || resolved(e) ? "ok" : e.statut === "erreur" ? "bad" : ""}">${e.statut === "fait" ? "Rangé" : resolved(e) ? "Erreur résolue" : e.statut === "erreur" ? "Erreur" : "Annulé"}</span>
       <b>${esc(e.titre)}</b>${e.categorie ? `<span class="tag info">${catName(e.categorie)}</span>` : ""}
       <span class="muted">${new Date(e.t * 1000).toLocaleString()}</span>${e.taille_totale ? `<span class="muted">· ${fmtSize(e.taille_totale)}</span>` : ""}
       ${e.fichiers[0] ? `<span class="tag">${esc(e.fichiers[0].methode)}</span>` : ""}</div>
       <div class="mono muted" style="margin-top:6px">${esc(e.nom)}</div><div class="mono" style="margin-top:2px">→ ${esc(e.vers)}</div>
       ${e.motif ? `<div class="path">${esc(e.motif)}</div>` : ""}
       <div class="actions">${e.statut === "fait" ? `<button class="btn small danger" data-undo="${esc(e.id)}">Annuler ce rangement</button>` : ""}
-      ${e.statut === "erreur" && real ? `<button class="btn small" data-run="${esc(e.nom)}">Réessayer</button>` : ""}</div></div>`).join("")}`;
+      ${e.statut === "erreur" && real && !resolved(e) ? `<button class="btn small" data-run="${esc(e.nom)}">Réessayer</button>` : ""}</div></div>`).join("")}`;
   v.querySelectorAll("[data-undo]").forEach((b) => b.addEventListener("click", async () => {
     if (!confirm("Annuler ce rangement ? Les fichiers rangés par l'appli seront retirés de la bibliothèque. L'original dans le dossier d'arrivée n'est pas touché.")) return;
     try { await api("/api/undo", { method: "POST", body: { id: b.dataset.undo } }); toast("Rangement annulé"); vHistory(v); } catch (e) { toast("Annulation refusée : " + e.message); }

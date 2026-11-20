@@ -130,11 +130,15 @@ impl Secrets {
         std::fs::read_to_string(Self::path(data_dir)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
     }
     pub fn save(&self, data_dir: &Path) -> std::io::Result<()> {
-        use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(data_dir)?;
         let p = Self::path(data_dir);
         std::fs::write(&p, serde_json::to_string_pretty(self).unwrap_or_default())?;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
     }
 }
 

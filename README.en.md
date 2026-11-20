@@ -1,0 +1,78 @@
+# kesal-rangeur
+
+[🇫🇷 Français](README.md) · 🇬🇧 English · [🇪🇸 Español](README.es.md)
+
+**Automatically files your downloads** (movies, TV series, cartoons, shows, documentaries, stand-up…) into the right place of your library, with **titles in your own language**.
+
+Why? Sonarr and Radarr rely on TheTVDB, which often returns English titles. `kesal-rangeur` uses **TMDB**, which has localized titles (French, Spanish, German…).
+
+## Features
+
+- Watches one or more **incoming folders** (Resilio Sync, torrent client…).
+- **Waits for transfers to finish**: no temporary file (`.!sync`, `.part`…) and nothing modified for 30 min (configurable). Checked again right before copying.
+- **Parses release names**: movie or series, season, full pack, quality, language tags.
+- **Identifies with TMDB** in your language and picks the category from genres (Animation, Documentary, Reality, Talk…). Custom rules supported.
+- **Finds the existing series folder** (even under a different name) and adds the season; otherwise creates "Title (year)". Same-title remakes are told apart by year.
+- Handles shows where **TMDB has one entry per season** and renumbers episodes so Plex and Jellyfin match them.
+- **Duplicate detection** (movie: title + year; episode: series + SxxEyy).
+- **No extra disk space**: reflink (Btrfs/XFS), else hard link, else plain copy. The original stays in place.
+- **When in doubt → "To sort"**: TMDB candidates with posters, you pick, it remembers.
+- **History with an Undo button**, automatic retries, never leaves anything half-done.
+- Notifies **Plex** and **Jellyfin** (and Home Assistant) after filing.
+- Mobile-friendly web UI with **built-in help** (`?` button).
+
+## Safety: dry-run mode
+
+On first start the app is in **dry-run mode**: it analyses and proposes, but **writes nothing**. Review the result, then turn dry-run off in Settings when you are ready. Every real filing can be undone.
+
+## Install
+
+### Docker (recommended, e.g. on a NAS)
+
+```yaml
+services:
+  rangeur:
+    image: ghcr.io/YOUR-ACCOUNT/kesal-rangeur:latest
+    ports: ["3050:3050"]
+    user: "1026:100"                 # PUID:PGID owning your media
+    volumes:
+      - ./config:/config
+      - /volume1/MEDIA:/media        # ONE mount for incoming AND destination folders
+```
+
+> **One mount for everything.** For instant copies, incoming and destination folders must be on the same Btrfs/XFS volume *and* inside one Docker mount. Check with:
+> `docker exec kesal-rangeur kesal-rangeur selftest /media/incoming /media/movies`
+
+Then open `http://your-server:3050` and follow the built-in help (`?`).
+
+### Binaries
+
+Windows (`.exe`), Linux and macOS (x86 and ARM): see *Releases*. Run `kesal-rangeur serve`. Reflink copies only work on Linux; elsewhere hard link or plain copy.
+
+### Build
+
+```sh
+cargo build --release     # recent Rust; the UI is embedded in the binary
+```
+
+## Settings
+
+Everything is configured in the UI. Files live in the config folder: `config.toml`, `secrets.json` (keys, mode 600), `choices.json`, `history.json`, `tmdb-cache.json`.
+
+**TMDB key**: free at [themoviedb.org](https://www.themoviedb.org/settings/api). Each user enters their own; none is bundled. A step-by-step guide is in the app's help.
+
+## Network security
+
+The UI has **no password**: keep it on your local network, never expose it to the Internet without a VPN or an authenticated reverse proxy.
+
+## Roadmap
+
+Tracker search (Prowlarr / Jackett, Torznab), release selection by preference, sending to your torrent client, new-episode watching.
+
+## License
+
+GPL v3 — see [LICENSE](LICENSE). This app must stay **free** (the TMDB API is free for non-commercial use only).
+
+## TMDB
+
+> This product uses the TMDB API but is not endorsed or certified by TMDB.

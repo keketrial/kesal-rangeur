@@ -62,6 +62,21 @@ async fn main() -> anyhow::Result<()> {
             let bind = std::env::var("KESAL_BIND").unwrap_or("0.0.0.0:3050".into());
             web::serve(cfg_path, bind).await?;
         }
+        Some("selftest") => {
+            // kesal-rangeur selftest <dossier d'arrivée> [dossier de destination] : quelles copies marchent entre les deux ?
+            let a = Path::new(args.get(2).map(|s| s.as_str()).unwrap_or("."));
+            let b = Path::new(args.get(3).map(|s| s.as_str()).unwrap_or(args.get(2).map(|s| s.as_str()).unwrap_or(".")));
+            println!("De  : {}\nVers: {}\n", a.display(), b.display());
+            let res = exec::selftest(a, b);
+            for (name, r) in &res {
+                match r {
+                    Ok(_) => println!("  ✓ {name}"),
+                    Err(e) => println!("  ✗ {name} — {e}"),
+                }
+            }
+            let fast = res.iter().any(|(n, r)| r.is_ok() && !n.starts_with("copie"));
+            println!("\n{}", if fast { "Les copies instantanées sont possibles : le mode automatique les utilisera." } else { "Aucune copie instantanée possible entre ces deux dossiers : chaque rangement sera une vraie copie (lente, et elle double l'espace utilisé). Vérifiez que les deux sont sur le même volume Btrfs et dans un seul montage Docker." });
+        }
         Some("matrix") => matrix(args.get(2).map(|s| s.as_str()).unwrap_or("data/config.toml")).await?,
         Some("plan") => {
             // kesal-rangeur plan <config.toml> : essai à blanc, ne touche à rien

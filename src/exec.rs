@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -106,9 +105,18 @@ pub fn unique_id() -> String {
     format!("{:x}-{:x}", nanos, N.fetch_add(1, Ordering::Relaxed))
 }
 
-const FICLONE: libc::c_ulong = 0x4004_9409;
+#[cfg(target_os = "linux")]
+const FICLONE: libc::Ioctl = 0x4004_9409 as libc::Ioctl;
 
+/// Reflink (copie instantanée sans place en plus) : Linux sur Btrfs/XFS. Ailleurs : non supporté, on passe à la méthode suivante.
+#[cfg(not(target_os = "linux"))]
+fn try_reflink(_src: &Path, _dst: &Path) -> io::Result<()> {
+    Err(io::Error::from_raw_os_error(95))
+}
+
+#[cfg(target_os = "linux")]
 fn try_reflink(src: &Path, dst: &Path) -> io::Result<()> {
+    use std::os::unix::io::AsRawFd;
     let s = fs::File::open(src)?;
     let d = fs::OpenOptions::new().write(true).create_new(true).open(dst)?;
     let r = unsafe { libc::ioctl(d.as_raw_fd(), FICLONE, s.as_raw_fd()) };
@@ -122,7 +130,7 @@ fn try_reflink(src: &Path, dst: &Path) -> io::Result<()> {
 }
 
 /// Copie un fichier avec la meilleure méthode disponible. Renvoie la méthode employée.
-fn place_file(src: &Path, dst: &Path, pref: Method) -> Result<&'static str, ExecError> {
+pub fn place_file(src: &Path, dst: &Path, pref: Method) -> Result<&'static str, ExecError> {
     let order: &[Method] = match pref {
         Method::Auto => &[Method::Reflink, Method::Hardlink, Method::Copy],
         Method::Reflink => &[Method::Reflink],
@@ -396,7 +404,7 @@ impl History {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::MetadataExt;
@@ -631,4 +639,27 @@ mod tests {
         let h2 = History::load(&t.path().join("data"));
         assert_eq!(h2.get(&id).unwrap().statut, "annule");
     }
+}
+
+/// Vérifie quelles méthodes de copie marchent entre deux dossiers (ne laisse rien derrière).
+pub fn selftest(from_dir: &Path, to_dir: &Path) -> Vec<(String, Result<String, String>)> {
+    let tag = unique_id();
+    let a = from_dir.join(format!(".kesal-selftest-{tag}"));
+    let b = to_dir.join(format!(".kesal-selftest-{tag}"));
+    let mut out = Vec::new();
+    let setup = fs::create_dir_all(&a).and_then(|_| fs::create_dir_all(&b)).and_then(|_| fs::write(a.join("source.bin"), vec![7u8; 1 << 20]));
+    if let Err(e) = setup {
+        let _ = fs::remove_dir_all(&a);
+        let _ = fs::remove_dir_all(&b);
+        return vec![("préparation".into(), Err(format!("impossible d'écrire dans les dossiers : {e}")))];
+    }
+    for (name, m) in [("reflink (instantané, sans place en plus)", Method::Reflink), ("lien physique (sans place en plus)", Method::Hardlink), ("copie normale", Method::Copy)] {
+        let dst = b.join(format!("{m:?}.bin"));
+        let r = place_file(&a.join("source.bin"), &dst, m).map(|x| x.to_string()).map_err(|e| e.to_string());
+        let size_ok = fs::metadata(&dst).map(|x| x.len() == 1 << 20).unwrap_or(false);
+        out.push((name.to_string(), match r { Ok(x) if size_ok => Ok(x), Ok(_) => Err("fichier incomplet".into()), Err(e) => Err(e) }));
+    }
+    let _ = fs::remove_dir_all(&a); // uniquement les dossiers de test créés ci-dessus
+    let _ = fs::remove_dir_all(&b);
+    out
 }

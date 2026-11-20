@@ -1,0 +1,14 @@
+# Exemple pour un NAS (Synology…). Adaptez les chemins, le PUID:PGID et, quand vous publierez l'image, son nom.
+services:
+  rangeur:
+    image: kesal-rangeur:latest        # ou ghcr.io/VOTRE-COMPTE/kesal-rangeur:latest
+    container_name: kesal-rangeur
+    restart: unless-stopped
+    user: "1026:100"                   # PUID:PGID du compte qui possède vos médias
+    ports:
+      - "3050:3050"
+    volumes:
+      - ./config:/config               # réglages, clés (secrets.json), cache TMDB, historique
+      # UN SEUL montage pour le dossier d'arrivée ET les dossiers de destination :
+      # c'est ce qui permet les copies instantanées (reflink / lien physique) sans doubler l'espace.
+      - /volume1/NAS5BAIES/VOD:/vod
