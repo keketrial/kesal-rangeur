@@ -17,6 +17,6 @@ ENV KESAL_CONFIG=/config/config.toml \
 WORKDIR /config
 VOLUME /config
 EXPOSE 3050
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD wget -qO- http://127.0.0.1:3050/api/status >/dev/null || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD wget -qO- http://127.0.0.1:3050/healthz >/dev/null || exit 1
 ENTRYPOINT ["/sbin/tini", "--", "kesal-rangeur"]
 CMD ["serve"]

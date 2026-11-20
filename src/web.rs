@@ -814,6 +814,10 @@ async fn guard(State(st): State<S>, req: Request, next: Next) -> Response {
     if !host_allowed(&host, &st.allowed_hosts) {
         return deny(StatusCode::FORBIDDEN, "Nom d'hôte non autorisé. Pour y accéder par un nom de domaine, ajoutez-le à KESAL_ALLOWED_HOSTS.");
     }
+    // Bilan de santé (Docker) : ne révèle rien, donc accessible sans mot de passe.
+    if req.uri().path() == "/healthz" {
+        return (StatusCode::OK, "ok").into_response();
+    }
     if let Some(pw) = &st.password {
         if !basic_password_ok(auth.as_deref(), pw) {
             let mut r = deny(StatusCode::UNAUTHORIZED, "Mot de passe requis.");
