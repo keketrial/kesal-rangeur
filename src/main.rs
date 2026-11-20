@@ -4,6 +4,7 @@ mod norm;
 mod parser;
 mod plan;
 mod tmdb;
+mod web;
 
 use std::path::Path;
 
@@ -53,11 +54,17 @@ async fn main() -> anyhow::Result<()> {
             }
             eprintln!("{} dossiers en {:.1}s", lib.len(), t.elapsed().as_secs_f32());
         }
+        Some("serve") => {
+            // kesal-rangeur serve [config.toml] : interface web (port 3050 par défaut, KESAL_BIND pour changer)
+            let cfg_path = std::path::PathBuf::from(args.get(2).cloned().or_else(|| std::env::var("KESAL_CONFIG").ok()).unwrap_or("data/config.toml".into()));
+            let bind = std::env::var("KESAL_BIND").unwrap_or("0.0.0.0:3050".into());
+            web::serve(cfg_path, bind).await?;
+        }
         Some("plan") => {
             // kesal-rangeur plan <config.toml> : essai à blanc, ne touche à rien
-            let cfg = config::Config::load(Path::new(args.get(2).map(|s| s.as_str()).unwrap_or("data/config.toml")))?;
-            let tmdb = tmdb::Tmdb::new(cfg.tmdb_secret()?, cfg.language.clone(), &cfg.data_dir)?;
-            let planner = plan::Planner::new(&cfg, &tmdb);
+            let cfg = std::sync::Arc::new(config::Config::load(Path::new(args.get(2).map(|s| s.as_str()).unwrap_or("data/config.toml")))?);
+            let tmdb = std::sync::Arc::new(tmdb::Tmdb::new(cfg.tmdb_secret()?, cfg.language.clone(), &cfg.data_dir)?);
+            let planner = plan::Planner::new(cfg.clone(), tmdb.clone());
             for input in &cfg.inputs {
                 println!("=== {} (mode {}, {}) ===", input.path.display(), input.mode, input.action);
                 let items = planner.plan_input(input).await?;
@@ -88,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
             tmdb.save_cache();
             eprintln!("{} requêtes TMDB", tmdb.requests.lock().unwrap());
         }
-        _ => eprintln!("usage : kesal-rangeur parse|index <dossier> | plan <config.toml>"),
+        _ => eprintln!("usage : kesal-rangeur parse|index <dossier> | plan <config.toml> | serve [config.toml]"),
     }
     Ok(())
 }

@@ -1,0 +1,366 @@
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const CATS = ["film", "serie", "dessin_anime", "telerealite", "documentaire", "spectacle"];
+const catName = (c) => t("cat_" + c);
+let S = { status: null, items: [], settings: null, view: "accueil", filter: "ranger" };
+
+async function api(path, opts) {
+  const o = Object.assign({ headers: { "Content-Type": "application/json" } }, opts || {});
+  if (o.body && typeof o.body !== "string") o.body = JSON.stringify(o.body);
+  const r = await fetch(path, o);
+  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  return r.json();
+}
+let toastT;
+function toast(msg) {
+  const el = $("#toast"); el.textContent = msg; el.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("show"), 3200);
+}
+const poster = (p, w = 154) => p ? `<img class="poster" loading="lazy" alt="" src="https://image.tmdb.org/t/p/w${w}${esc(p)}">` : `<div class="poster"></div>`;
+const helpBtn = (a) => `<button class="help-btn" type="button" data-help="${a}" aria-label="Aide" title="Aide">?</button>`;
+const short = (p, n = 70) => { p = String(p); return p.length > n ? "…" + p.slice(-n) : p; };
+
+// ---------- navigation ----------
+const TABS = [
+  ["accueil", "tab_home"], ["plan", "tab_plan"], ["trier", "tab_sort"], ["historique", "tab_history"],
+  ["bibliotheque", "tab_library"], ["reglages", "tab_settings"], ["journal", "tab_log"], ["apropos", "tab_about"],
+];
+function route() {
+  const v = (location.hash || "#/accueil").replace("#/", "").split("?")[0];
+  S.view = TABS.some((x) => x[0] === v) ? v : "accueil";
+  render();
+}
+function counts() { return (S.status && S.status.compteurs) || {}; }
+function renderTabs() {
+  const c = counts();
+  const badge = { plan: (c.ranger || 0) + (c.doublon || 0) + (c.attendre || 0), trier: c.a_trier || 0 };
+  $("#tabs").innerHTML = TABS.map(([id, k]) =>
+    `<a href="#/${id}" class="${S.view === id ? "on" : ""}">${t(k)}${badge[id] ? `<span class="n">${badge[id]}</span>` : ""}</a>`).join("");
+}
+async function refreshStatus() {
+  try { S.status = await api("/api/status"); } catch (e) { return; }
+  const st = S.status;
+  $("#pill").textContent = st.scanning ? t("pill_busy") : (st.essai ? t("pill_dry") : "Actif");
+  $("#pill").className = "pill" + (st.scanning ? " busy" : "");
+  $("#btnScan").disabled = st.scanning;
+  $("#btnScan").innerHTML = st.scanning ? `<span class="spin"></span>${t("scanning")}` : t("scan");
+  renderTabs();
+}
+let wasScanning = false;
+async function tick() {
+  await refreshStatus();
+  const sc = S.status && S.status.scanning;
+  if (wasScanning && !sc) { await loadPlan(); toast(S.status.erreur ? "Analyse impossible : " + S.status.erreur : "Analyse terminée"); render(); }
+  wasScanning = !!sc;
+}
+async function loadPlan() { try { S.items = (await api("/api/plan")).items; } catch (e) { S.items = []; } }
+
+async function render() {
+  renderTabs();
+  const v = $("#view");
+  const fn = { accueil: vHome, plan: vPlan, trier: vSort, historique: vHistory, bibliotheque: vLibrary, reglages: vSettings, journal: vLog, apropos: vAbout }[S.view];
+  await fn(v);
+  window.scrollTo(0, 0);
+}
+
+// ---------- Accueil ----------
+function vHome(v) {
+  const st = S.status || {}; const c = counts();
+  const ready = st.tmdb_ok && st.entrees > 0 && st.destinations > 0;
+  const step = (ok, txt, anchor, link) => `<li><span class="dot ${ok ? "ok" : ""}">${ok ? "✓" : "·"}</span><span style="flex:1">${txt}</span>${helpBtn(anchor)}${ok ? "" : `<a class="btn small" href="${link}">Régler</a>`}</li>`;
+  const stat = (n, label, f) => `<a class="stat" href="#/plan" data-filter="${f}"><b>${n || 0}</b><span>${label}</span></a>`;
+  v.innerHTML = `
+    <h2>Accueil</h2><p class="lead">Ce que l'appli a compris des dossiers d'arrivée.</p>
+    ${st.essai ? `<div class="banner"><span>🛡️</span><span>${t("dry_banner")} ${helpBtn("essai")}</span></div>` : ""}
+    ${st.erreur ? `<div class="banner bad"><span>⚠️</span><span>${esc(st.erreur)}</span></div>` : ""}
+    ${ready ? "" : `<div class="card"><b>Pour démarrer</b><ul class="steps">
+      ${step(st.tmdb_ok, "Clé TMDB (pour les titres en français)", "tmdb", "#/reglages")}
+      ${step(st.entrees > 0, "Un dossier d'arrivée (là où Resilio dépose)", "arrivee", "#/reglages")}
+      ${step(st.destinations > 0, "Les dossiers de destination (films, séries…)", "destinations", "#/reglages")}
+    </ul></div>`}
+    <div class="grid">
+      ${stat(c.ranger, t("d_ranger"), "ranger")}${stat(c.doublon, t("d_doublon"), "doublon")}${stat(c.a_trier, t("d_a_trier"), "a_trier")}
+      ${stat(c.attendre, t("d_attendre"), "attendre")}${stat(c.ignorer, t("d_ignorer"), "ignorer")}
+    </div>
+    <p class="muted" style="margin-top:14px">${st.dernier_scan ? "Dernière analyse : " + new Date(st.dernier_scan * 1000).toLocaleString() : "Aucune analyse pour l'instant — cliquez sur « " + t("scan") + " »."}
+    ${st.films_connus != null ? ` · ${st.films_connus} films connus · ${st.choix_retenus || 0} choix retenu(s)` : ""}</p>
+    <h3>Services</h3>
+    <div class="chips"><span class="tag ${st.tmdb_ok ? "ok" : "warn"}">TMDB ${st.tmdb_ok ? "connecté" : "non configuré"}</span>
+      <span class="tag ${st.plex ? "ok" : ""}">Plex ${st.plex ? "configuré" : "non configuré"}</span>
+      <span class="tag ${st.jellyfin ? "ok" : ""}">Jellyfin ${st.jellyfin ? "configuré" : "non configuré"}</span></div>`;
+  v.querySelectorAll("[data-filter]").forEach((a) => a.addEventListener("click", () => { S.filter = a.dataset.filter; }));
+}
+
+// ---------- En attente (plan) ----------
+function decisionOf(it) { return it.decision.decision; }
+function itemCard(it, opts = {}) {
+  const d = it.decision, r = it.reconnu;
+  const title = r ? `${esc(r.titre)}${r.annee ? ` <span class="muted">(${r.annee})</span>` : ""}` : `<span class="muted">${esc(it.release.title || "—")}</span>`;
+  const tags = [];
+  if (r) tags.push(`<span class="tag info">${catName(r.categorie)}</span>`);
+  if (r && r.titre_original && r.titre_original !== r.titre) tags.push(`<span class="tag">${esc(r.titre_original)}</span>`);
+  if (it.release.resolution) tags.push(`<span class="tag">${esc(it.release.resolution)}</span>`);
+  let detail = "";
+  switch (d.decision) {
+    case "ranger":
+      tags.unshift(r && r.media === "movie" ? `<span class="tag ok">Sera rangé</span>` : `<span class="tag ok">${d.nouveau_dossier ? "Nouveau dossier" : "Dossier de la série existant"}</span>`);
+      detail = `<span class="path mono" title="${esc(d.vers)}">→ ${esc(short(d.vers, 90))}</span>`;
+      if (d.renumerotation) {
+        detail += `<details class="ren"><summary>Renumérotation S${String(d.renumerotation[0]).padStart(2, "0")} → S${String(d.renumerotation[1]).padStart(2, "0")} (${d.renommages.length} fichier(s))</summary>${d.renommages.map((x) => `<div class="mono">${esc(x.ancien.split("/").pop())}<br>→ ${esc(x.nouveau.split("/").pop())}</div>`).join("")}</details>`;
+      }
+      break;
+    case "doublon": tags.unshift(`<span class="tag dup">Doublon</span>`); detail = `<span class="path">${esc(d.raison)} — <span class="mono">${esc(short(d.existant, 80))}</span></span>`; break;
+    case "a_trier": tags.unshift(`<span class="tag warn">À trier</span>`); detail = `<span class="path">${esc(d.raison)}</span>`; break;
+    case "attendre": tags.unshift(`<span class="tag warn">En attente</span>`); detail = `<span class="path">${esc(d.raison)}</span>`; break;
+    case "ignorer": tags.unshift(`<span class="tag">Ignoré</span>`); detail = `<span class="path">${esc(d.raison)}</span>`; break;
+  }
+  const actions = opts.noActions ? "" : `<div class="actions">
+      <button class="btn small" data-fix="${esc(it.nom)}">Corriger la fiche…</button>
+      <button class="btn small" disabled title="Désactivé : mode essai à blanc">Ranger maintenant</button></div>`;
+  return `<div class="item">${poster(r && r.affiche)}<div class="body">
+    <div class="orig mono">${esc(it.nom)}</div><div class="title">${title}</div>
+    <div class="row">${tags.join("")}</div>${detail}${actions}</div></div>`;
+}
+function bindFix(root) { root.querySelectorAll("[data-fix]").forEach((b) => b.addEventListener("click", () => openSearch(b.dataset.fix))); }
+
+async function vPlan(v) {
+  if (!S.items.length) await loadPlan();
+  const c = counts(); const order = ["ranger", "doublon", "a_trier", "attendre", "ignorer"];
+  const list = S.items.filter((i) => decisionOf(i) === S.filter);
+  v.innerHTML = `<h2>En attente ${helpBtn("attente")}</h2><p class="lead">Ce que l'appli ferait de chaque élément arrivé. Rien n'est exécuté.</p>
+    <div class="chips">${order.map((k) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${t("d_" + k)} (${c[k] || 0})</button>`).join("")}</div>
+    ${S.items.length === 0 ? `<div class="empty"><b>Rien à afficher</b>Lancez une analyse avec le bouton en haut à droite.</div>` :
+      list.length === 0 ? `<div class="empty"><b>Aucun élément dans cette catégorie</b></div>` : list.map((i) => itemCard(i)).join("")}`;
+  v.querySelectorAll("[data-f]").forEach((b) => b.addEventListener("click", () => { S.filter = b.dataset.f; vPlan(v); }));
+  bindFix(v);
+}
+
+// ---------- À trier ----------
+async function vSort(v) {
+  if (!S.items.length) await loadPlan();
+  const list = S.items.filter((i) => decisionOf(i) === "a_trier");
+  v.innerHTML = `<h2>À trier ${helpBtn("trier")}</h2><p class="lead">Quand l'appli hésite, elle ne range pas : vous choisissez, elle retient.</p>
+    ${list.length === 0 ? `<div class="empty"><b>Rien à trier 🎉</b>Tous les éléments reconnus sont sûrs.</div>` : ""}
+    ${list.map((it) => `<div class="card"><div class="orig mono">${esc(it.nom)}</div><p style="margin:6px 0"><span class="tag warn">${esc(it.decision.raison)}</span></p>
+      <div class="cands" style="padding:0">${it.candidats.slice(0, 4).map((c) => candCard(c, it.nom)).join("") || `<span class="muted">Aucune fiche proposée.</span>`}</div>
+      <div class="actions"><button class="btn small" data-fix="${esc(it.nom)}">Chercher autre chose…</button></div></div>`).join("")}`;
+  bindFix(v); bindPick(v);
+}
+function candCard(c, nom) {
+  const cat = c.genres.includes(10764) || c.genres.includes(10767) ? "telerealite" : c.genres.includes(99) ? "documentaire" : c.genres.includes(16) ? "dessin_anime" : c.media === "tv" ? "serie" : "film";
+  return `<div class="cand">${poster(c.poster, 154)}<div style="min-width:0;flex:1"><b>${esc(c.title)}</b> <span class="muted">(${c.year || "?"})</span>
+    <div><span class="tag">${c.media === "tv" ? "Série" : "Film"}</span> <span class="tag info">${catName(cat)}</span>${c.original_title && c.original_title !== c.title ? ` <span class="tag">${esc(c.original_title)}</span>` : ""}</div>
+    <p>${esc(c.overview || "Pas de résumé.")}</p>
+    <button class="btn small primary" data-pick="${esc(nom)}" data-id="${c.id}" data-media="${c.media}" data-cat="${cat}">C'est celui-ci</button></div></div>`;
+}
+function bindPick(root) {
+  root.querySelectorAll("[data-pick]").forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true;
+    try {
+      await api("/api/choice", { method: "POST", body: { nom: b.dataset.pick, tmdb_id: +b.dataset.id, media: b.dataset.media, category: b.dataset.cat } });
+      toast("Choix retenu : l'appli s'en souviendra"); $("#dlgSearch").close();
+      await loadPlan(); await refreshStatus(); render();
+    } catch (e) { toast("Erreur : " + e.message); b.disabled = false; }
+  }));
+}
+function openSearch(nom) {
+  const it = S.items.find((i) => i.nom === nom); if (!it) return;
+  $("#searchTitle").textContent = "Corriger la fiche";
+  $("#searchQ").value = it.release.title;
+  $("#searchKind").innerHTML = `<option value="all">Films et séries</option><option value="tv">Séries</option><option value="movie">Films</option>`;
+  $("#searchKind").value = it.release.seasons.length ? "tv" : "all";
+  $("#searchForm button").textContent = "Chercher";
+  const run = async () => {
+    $("#searchRes").innerHTML = `<p class="muted"><span class="spin"></span>Recherche…</p>`;
+    try {
+      const res = await api(`/api/tmdb/search?q=${encodeURIComponent($("#searchQ").value)}&kind=${$("#searchKind").value}`);
+      $("#searchRes").innerHTML = res.length ? res.map((c) => candCard(c, nom)).join("") : `<p class="muted">Aucun résultat.</p>`;
+      bindPick($("#searchRes"));
+    } catch (e) { $("#searchRes").innerHTML = `<p class="muted">Erreur : ${esc(e.message)}</p>`; }
+  };
+  $("#searchForm").onsubmit = (e) => { e.preventDefault(); run(); };
+  $("#dlgSearch").showModal(); run();
+}
+
+// ---------- Historique ----------
+async function vHistory(v) {
+  v.innerHTML = `<h2>Historique ${helpBtn("historique")}</h2><p class="lead">Chaque rangement : avant → après, avec un bouton pour l'annuler.</p>
+    <div class="empty"><b>Aucun rangement pour l'instant</b>En mode essai à blanc, rien n'est exécuté, donc rien n'est écrit ici.</div>`;
+}
+
+// ---------- Bibliothèque ----------
+async function vLibrary(v) {
+  let lib; try { lib = await api("/api/library"); } catch (e) { lib = { pret: false }; }
+  if (!lib.pret) { v.innerHTML = `<h2>Bibliothèque</h2><div class="empty"><b>Pas encore lue</b>La bibliothèque est lue pendant l'analyse. Lancez-en une.</div>`; return; }
+  const q = (S.libq || "").toLowerCase();
+  let html = `<h2>Bibliothèque ${helpBtn("bibliotheque")}</h2><p class="lead">Ce que l'appli a compris de vos dossiers existants (${lib.films} films connus pour les doublons).</p>
+    <label class="field"><input id="libq" placeholder="Filtrer par titre…" value="${esc(S.libq || "")}"></label>`;
+  for (const [cat, rows] of Object.entries(lib.categories)) {
+    const f = rows.filter((r) => !q || (r.nom + r.titre).toLowerCase().includes(q));
+    if (!rows.length) { html += `<h3>${esc(cat)} <span class="muted">— vide ou non montée sur cette machine</span></h3>`; continue; }
+    const sus = f.filter((r) => r.suspect).length;
+    html += `<h3>${esc(cat)} <span class="muted">(${f.length})</span> ${sus ? `<span class="tag warn">${sus} sans saison détectée</span>` : ""}</h3>
+      <div class="card" style="padding:0;overflow:auto"><table><thead><tr><th>Dossier</th><th>Titre lu</th><th>Saisons</th><th>Vidéos</th></tr></thead><tbody>
+      ${f.map((r) => `<tr><td class="mono">${esc(r.nom)}</td><td>${esc(r.titre)}${r.annee ? ` <span class="muted">(${r.annee})</span>` : ""}</td>
+      <td>${r.saisons.length ? r.saisons.join(", ") : (r.integrale ? "intégrale" : `<span class="tag warn">?</span>`)}</td><td>${r.videos}</td></tr>`).join("")}</tbody></table></div>`;
+  }
+  v.innerHTML = html;
+  $("#libq").addEventListener("input", (e) => { S.libq = e.target.value; clearTimeout(S.lt); S.lt = setTimeout(() => vLibrary(v), 250); });
+}
+
+// ---------- Réglages ----------
+async function vSettings(v) {
+  const s = S.settings = await api("/api/settings");
+  const secTag = (x) => x.ok ? `<span class="tag ok">enregistrée (…${esc(x.fin)})</span>` : `<span class="tag warn">non renseignée</span>`;
+  v.innerHTML = `<h2>Réglages</h2><p class="lead">Tout se règle ici. Le bouton <b>?</b> à côté de chaque réglage explique à quoi il sert.</p>
+  ${s.dossiers_introuvables.length ? `<div class="banner"><span>⚠️</span><span>Dossiers introuvables sur cette machine : ${s.dossiers_introuvables.map((p) => `<span class="mono">${esc(p)}</span>`).join(", ")}</span></div>` : ""}
+  <div class="card"><h3 style="margin-top:0">TMDB — titres et affiches ${helpBtn("tmdb")}</h3>
+    <label class="field"><span>Clé API ou jeton d'accès ${secTag(s.secrets.tmdb)}</span>
+      <div class="inline"><input id="s_tmdb" type="password" autocomplete="off" placeholder="Coller ici pour la remplacer (laisser vide = inchangée)"><button class="btn" id="b_tmdbtest" type="button">${t("test")}</button></div></label>
+    <label class="field"><span>Langue des titres ${helpBtn("langue")}</span>
+      <select id="s_lang">${[["fr-FR", "Français"], ["es-ES", "Español"], ["en-US", "English"], ["de-DE", "Deutsch"], ["it-IT", "Italiano"], ["pt-PT", "Português"]].map(([c, n]) => `<option value="${c}" ${s.language === c ? "selected" : ""}>${n} (${c})</option>`).join("")}</select></label></div>
+
+  <div class="card"><h3 style="margin-top:0">Dossiers d'arrivée ${helpBtn("arrivee")}</h3><div id="inputs"></div>
+    <button class="btn small" id="addInput" type="button">+ Ajouter un dossier d'arrivée</button></div>
+
+  <div class="card"><h3 style="margin-top:0">Dossiers de destination ${helpBtn("destinations")}</h3>
+    ${CATS.map((c) => `<div class="dest-row"><span>${catName(c)}</span><div class="inline"><input data-dest="${c}" value="${esc(s.destinations[c] || "")}" placeholder="(non utilisé)"><button class="btn small" data-pickdest="${c}" type="button">${t("browse")}</button></div></div>`).join("")}
+    <h3>Films déjà présents ailleurs (pour repérer les doublons) ${helpBtn("doublons")}</h3><div id="filmlibs"></div>
+    <button class="btn small" id="addFilmLib" type="button">+ Ajouter un dossier de films</button></div>
+
+  <div class="card"><h3 style="margin-top:0">Règles personnelles ${helpBtn("regles")}</h3>
+    <p class="muted" style="margin-top:0">Exemple : « Pékin Express » → télé / téléréalité. Une règle l'emporte sur la devinette de TMDB.</p><div id="rules"></div>
+    <button class="btn small" id="addRule" type="button">+ Ajouter une règle</button></div>
+
+  <div class="card"><h3 style="margin-top:0">Plex, Jellyfin, Home Assistant ${helpBtn("services")}</h3>
+    <div class="banner info"><span>ℹ️</span><span>Ces réglages sont enregistrés mais pas encore utilisés : le rafraîchissement automatique viendra avec la copie réelle.</span></div>
+    <div class="two"><label class="field"><span>Adresse de Plex</span><input id="s_plexurl" value="${esc(s.plex_url)}" placeholder="http://192.168.1.40:32400"></label>
+      <label class="field"><span>Jeton Plex ${secTag(s.secrets.plex)}</span><input id="s_plextok" type="password" autocomplete="off" placeholder="vide = inchangé"></label></div>
+    <div class="two"><label class="field"><span>Adresse de Jellyfin</span><input id="s_jfurl" value="${esc(s.jellyfin_url)}" placeholder="http://192.168.1.40:8096"></label>
+      <label class="field"><span>Clé API Jellyfin ${secTag(s.secrets.jellyfin)}</span><input id="s_jftok" type="password" autocomplete="off" placeholder="vide = inchangée"></label></div>
+    <div class="two"><label class="field"><span>Adresse de Home Assistant</span><input id="s_haurl" value="${esc(s.ha_url)}" placeholder="http://192.168.1.41:8123"></label>
+      <label class="field"><span>Jeton Home Assistant ${secTag(s.secrets.ha)}</span><input id="s_hatok" type="password" autocomplete="off" placeholder="vide = inchangé"></label></div></div>
+  <div class="save-bar"><span class="muted" id="saveInfo"></span><button class="btn primary" id="saveBtn" type="button">${t("save")}</button></div>`;
+  drawInputs(); drawFilmLibs(); drawRules();
+  $("#addInput").onclick = () => { collect(); s.inputs.push({ path: "", mode: "auto", action: "copy", settle_minutes: 30 }); drawInputs(); };
+  $("#addFilmLib").onclick = () => { collect(); s.film_libraries.push(""); drawFilmLibs(); };
+  $("#addRule").onclick = () => { collect(); s.rules.push({ title: "", category: "telerealite" }); drawRules(); };
+  v.querySelectorAll("[data-pickdest]").forEach((b) => b.onclick = async () => {
+    const inp = v.querySelector(`[data-dest="${b.dataset.pickdest}"]`); const p = await pickFolder(inp.value, catName(b.dataset.pickdest)); if (p) inp.value = p;
+  });
+  $("#b_tmdbtest").onclick = async () => {
+    const key = $("#s_tmdb").value.trim();
+    if (key) { await save(true); }
+    const r = await api("/api/tmdb/test", { method: "POST" }); toast(r.message);
+  };
+  $("#saveBtn").onclick = () => save(false);
+}
+function drawInputs() {
+  const s = S.settings;
+  $("#inputs").innerHTML = s.inputs.length ? s.inputs.map((i, n) => `<div class="input-block" data-n="${n}">
+    <label class="field"><span>Dossier</span><div class="inline"><input data-k="path" value="${esc(i.path)}"><button class="btn small" data-b="path" type="button">${t("browse")}</button><button class="btn small danger" data-b="del" type="button">${t("remove")}</button></div></label>
+    <div class="three"><label class="field"><span>Mode ${helpBtn("modes")}</span><select data-k="mode"><option value="auto">${t("mode_auto")}</option>${CATS.map((c) => `<option value="${c}" ${i.mode === c ? "selected" : ""}>Tout va dans : ${catName(c)}</option>`).join("")}</select></label>
+      <label class="field"><span>Action ${helpBtn("action")}</span><select data-k="action"><option value="copy" ${i.action === "copy" ? "selected" : ""}>${t("act_copy")}</option><option value="move" ${i.action === "move" ? "selected" : ""}>${t("act_move")}</option></select></label>
+      <label class="field"><span>Calme (min) ${helpBtn("calme")}</span><input data-k="settle_minutes" type="number" min="0" value="${i.settle_minutes}"></label></div></div>`).join("") : `<p class="muted">Aucun dossier d'arrivée.</p>`;
+  $("#inputs").querySelectorAll(".input-block").forEach((blk) => {
+    const n = +blk.dataset.n;
+    blk.querySelector('[data-b="path"]').onclick = async () => { const el = blk.querySelector('[data-k="path"]'); const p = await pickFolder(el.value, "Dossier d'arrivée"); if (p) el.value = p; };
+    blk.querySelector('[data-b="del"]').onclick = () => { collect(); s.inputs.splice(n, 1); drawInputs(); };
+  });
+}
+function drawFilmLibs() {
+  const s = S.settings;
+  $("#filmlibs").innerHTML = s.film_libraries.map((p, n) => `<div class="inline" style="margin-bottom:6px" data-n="${n}"><input data-k="film" value="${esc(p)}"><button class="btn small" data-b="pick" type="button">${t("browse")}</button><button class="btn small danger" data-b="del" type="button">${t("remove")}</button></div>`).join("");
+  $("#filmlibs").querySelectorAll("[data-n]").forEach((row) => {
+    const n = +row.dataset.n;
+    row.querySelector('[data-b="pick"]').onclick = async () => { const el = row.querySelector("input"); const p = await pickFolder(el.value, "Dossier de films"); if (p) el.value = p; };
+    row.querySelector('[data-b="del"]').onclick = () => { collect(); s.film_libraries.splice(n, 1); drawFilmLibs(); };
+  });
+}
+function drawRules() {
+  const s = S.settings;
+  $("#rules").innerHTML = s.rules.map((r, n) => `<div class="inline" style="margin-bottom:6px" data-n="${n}"><input data-k="rt" value="${esc(r.title)}" placeholder="Titre (ex. Pékin Express)"><select data-k="rc" style="max-width:200px">${CATS.map((c) => `<option value="${c}" ${r.category === c ? "selected" : ""}>${catName(c)}</option>`).join("")}</select><button class="btn small danger" data-b="del" type="button">${t("remove")}</button></div>`).join("");
+  $("#rules").querySelectorAll("[data-n]").forEach((row) => { row.querySelector('[data-b="del"]').onclick = () => { collect(); s.rules.splice(+row.dataset.n, 1); drawRules(); }; });
+}
+function collect() {
+  const s = S.settings;
+  s.language = $("#s_lang").value;
+  s.inputs = [...document.querySelectorAll("#inputs .input-block")].map((b) => ({
+    path: b.querySelector('[data-k="path"]').value.trim(), mode: b.querySelector('[data-k="mode"]').value,
+    action: b.querySelector('[data-k="action"]').value, settle_minutes: Math.max(0, +b.querySelector('[data-k="settle_minutes"]').value || 0) }));
+  s.destinations = {};
+  document.querySelectorAll("[data-dest]").forEach((i) => { if (i.value.trim()) s.destinations[i.dataset.dest] = i.value.trim(); });
+  s.film_libraries = [...document.querySelectorAll('#filmlibs [data-k="film"]')].map((i) => i.value.trim()).filter(Boolean);
+  s.rules = [...document.querySelectorAll("#rules [data-n]")].map((r) => ({ title: r.querySelector('[data-k="rt"]').value.trim(), category: r.querySelector('[data-k="rc"]').value })).filter((r) => r.title);
+}
+async function save(quiet) {
+  collect(); const s = S.settings;
+  const body = { language: s.language, inputs: s.inputs.filter((i) => i.path), destinations: s.destinations, film_libraries: s.film_libraries, rules: s.rules,
+    plex_url: $("#s_plexurl").value, jellyfin_url: $("#s_jfurl").value, ha_url: $("#s_haurl").value,
+    tmdb_key: $("#s_tmdb").value, plex_token: $("#s_plextok").value, jellyfin_key: $("#s_jftok").value, ha_token: $("#s_hatok").value };
+  try { await api("/api/settings", { method: "POST", body }); if (!quiet) toast(t("saved")); await refreshStatus(); if (!quiet) vSettings($("#view")); }
+  catch (e) { toast("Erreur : " + e.message); }
+}
+
+// ---------- Journal / À propos ----------
+async function vLog(v) {
+  const l = (await api("/api/log")).lignes;
+  v.innerHTML = `<h2>Journal</h2><p class="lead">Ce que fait l'appli, en détail (pour comprendre un souci).</p><div class="card log">${l.length ? l.map((x) => `<div class="${x.niveau}">${new Date(x.t * 1000).toLocaleTimeString()} · ${esc(x.msg)}</div>`).join("") : "<span class='muted'>Vide.</span>"}</div>`;
+}
+function vAbout(v) {
+  v.innerHTML = `<h2>À propos</h2><div class="card"><b>kesal-rangeur</b> ${S.status ? "v" + esc(S.status.version) : ""}<p>Range automatiquement ce que vous téléchargez (films, séries, dessins animés, émissions, documentaires, spectacles) au bon endroit de votre bibliothèque, avec les titres de TMDB dans votre langue. Logiciel libre.</p></div>
+  <div class="card"><b>TMDB</b><p>Ce produit utilise l'API TMDB mais n'est ni approuvé ni certifié par TMDB.<br><i>This product uses the TMDB API but is not endorsed or certified by TMDB.</i></p>
+  <p class="muted">Les titres, résumés et affiches viennent de <a href="https://www.themoviedb.org" target="_blank" rel="noopener">themoviedb.org</a>. L'API est gratuite pour un usage non commercial : cette appli doit rester gratuite.</p></div>`;
+}
+
+// ---------- explorateur de dossiers ----------
+function pickFolder(start, title) {
+  return new Promise((resolve) => {
+    const dlg = $("#dlgFolder"); let cur = start || "/"; let done = false;
+    $("#folderTitle").textContent = title || "Choisir un dossier"; $("#folderOk").textContent = "Choisir ce dossier";
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    async function go(p) {
+      try {
+        const r = await api("/api/fs?path=" + encodeURIComponent(p)); cur = r.path;
+        $("#folderInput").value = cur; $("#folderInfo").textContent = `${r.dirs.length} dossier(s), ${r.videos} vidéo(s) ici`;
+        $("#folderList").innerHTML = (r.parent ? `<li data-p="${esc(r.parent)}">⬆️ ..</li>` : "") + r.dirs.map((d) => `<li data-p="${esc(cur.replace(/\/$/, "") + "/" + d)}">📁 ${esc(d)}</li>`).join("");
+        $("#folderList").querySelectorAll("li").forEach((li) => li.onclick = () => go(li.dataset.p));
+      } catch (e) { $("#folderInfo").textContent = "Dossier illisible"; }
+    }
+    $("#folderGo").onclick = () => go($("#folderInput").value);
+    $("#folderInput").onkeydown = (e) => { if (e.key === "Enter") go($("#folderInput").value); };
+    $("#folderOk").onclick = () => { finish($("#folderInput").value); dlg.close(); };
+    dlg.addEventListener("close", () => finish(null), { once: true });
+    dlg.showModal(); go(cur);
+  });
+}
+
+// ---------- aide ----------
+let helpLoaded = false;
+async function openHelp(anchor) {
+  $("#helpTitle").textContent = t("help_title");
+  if (!helpLoaded) {
+    const html = await (await fetch("/api/help?lang=" + LANG)).text();
+    $("#helpBody").innerHTML = html;
+    const toc = [...$("#helpBody").querySelectorAll("h3[id]")];
+    $("#helpToc").innerHTML = toc.map((h) => `<a href="#" data-a="${h.id}">${esc(h.textContent)}</a>`).join("");
+    $("#helpToc").querySelectorAll("a").forEach((a) => a.onclick = (e) => { e.preventDefault(); scrollHelp(a.dataset.a); });
+    helpLoaded = true;
+  }
+  if (!$("#dlgHelp").open) $("#dlgHelp").showModal();
+  scrollHelp(anchor || "debut");
+}
+function scrollHelp(id) { const el = $("#helpBody").querySelector("#" + CSS.escape(id)); if (el) $("#helpBody").scrollTo({ top: el.offsetTop - 8 }); }
+
+// ---------- démarrage ----------
+document.addEventListener("click", (e) => {
+  const h = e.target.closest("[data-help]"); if (h) { e.preventDefault(); openHelp(h.dataset.help); }
+  const c = e.target.closest("[data-close]"); if (c) c.closest("dialog").close();
+});
+$("#btnHelp").onclick = () => openHelp("debut");
+$("#btnScan").onclick = async () => {
+  try { await api("/api/scan", { method: "POST" }); wasScanning = true; await refreshStatus(); } catch (e) { toast("Erreur : " + e.message); }
+};
+window.addEventListener("hashchange", route);
+(async () => { await refreshStatus(); await loadPlan(); route(); setInterval(tick, 2000); })();

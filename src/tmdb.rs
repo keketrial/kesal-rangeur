@@ -141,7 +141,7 @@ impl Tmdb {
         Ok(v)
     }
 
-    async fn search_kind(&self, media: Media, query: &str) -> Result<Vec<Candidate>> {
+    pub async fn search_kind(&self, media: Media, query: &str) -> Result<Vec<Candidate>> {
         let (path, tkey, okey, dkey) = match media {
             Media::Movie => ("/search/movie", "title", "original_title", "release_date"),
             Media::Tv => ("/search/tv", "name", "original_name", "first_air_date"),
@@ -165,6 +165,35 @@ impl Tmdb {
             });
         }
         Ok(out)
+    }
+
+    /// Fiche complète d'un film ou d'une série (pour un choix déjà fait).
+    pub async fn details(&self, media: Media, id: u64) -> Result<Candidate> {
+        let (path, tkey, okey, dkey) = match media {
+            Media::Movie => (format!("/movie/{id}"), "title", "original_title", "release_date"),
+            Media::Tv => (format!("/tv/{id}"), "name", "original_name", "first_air_date"),
+        };
+        let r = self.get(&path, &[("language", &self.language)]).await?;
+        Ok(Candidate {
+            id,
+            media,
+            title: r[tkey].as_str().unwrap_or("").to_string(),
+            original_title: r[okey].as_str().unwrap_or("").to_string(),
+            year: r[dkey].as_str().and_then(|d| d.get(..4)).and_then(|y| y.parse().ok()),
+            genres: r["genres"].as_array().into_iter().flatten().filter_map(|g| g["id"].as_u64()).map(|g| g as u32).collect(),
+            countries: r["origin_country"].as_array().into_iter().flatten().filter_map(|c| c.as_str()).map(String::from).collect(),
+            poster: r["poster_path"].as_str().map(String::from),
+            overview: r["overview"].as_str().unwrap_or("").to_string(),
+            popularity: r["popularity"].as_f64().unwrap_or(0.0) as f32,
+            sim: 0.0,
+            score: 0.0,
+        })
+    }
+
+    /// Vérifie que la clé fonctionne (ignore le cache).
+    pub async fn test(&self) -> Result<()> {
+        self.cache.lock().unwrap().entries.remove("/configuration");
+        self.get("/configuration", &[]).await.map(|_| ())
     }
 
     /// Numéros de saison (hors épisodes spéciaux) d'une série TMDB.

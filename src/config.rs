@@ -63,8 +63,12 @@ pub struct Config {
     /// Langue des titres TMDB : fr-FR, es-ES, en-US…
     #[serde(default = "d_lang")]
     pub language: String,
-    /// Fichier contenant la clé API TMDB (v3) ou le jeton v4.
+    /// Fichier contenant la clé API TMDB (v3) ou le jeton v4 (facultatif : la clé saisie dans les Réglages est
+    /// rangée dans `secrets.json`, dans le dossier de données).
+    #[serde(default)]
     pub tmdb_key_file: String,
+    #[serde(default)]
+    pub integrations: Integrations,
     #[serde(default = "d_data")]
     pub data_dir: PathBuf,
     #[serde(default)]
@@ -76,6 +80,46 @@ pub struct Config {
     #[serde(default)]
     pub rules: Vec<Rule>,
 }
+/// Adresses des services à prévenir (les jetons sont dans `secrets.json`, jamais dans ce fichier).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Integrations {
+    #[serde(default)]
+    pub plex_url: String,
+    #[serde(default)]
+    pub jellyfin_url: String,
+    #[serde(default)]
+    pub ha_url: String,
+}
+
+/// Secrets saisis dans l'interface : fichier à part, lisible par le seul propriétaire.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Secrets {
+    #[serde(default)]
+    pub tmdb: String,
+    #[serde(default)]
+    pub plex: String,
+    #[serde(default)]
+    pub jellyfin: String,
+    #[serde(default)]
+    pub ha: String,
+}
+
+impl Secrets {
+    pub fn path(data_dir: &Path) -> PathBuf {
+        data_dir.join("secrets.json")
+    }
+    pub fn load(data_dir: &Path) -> Secrets {
+        std::fs::read_to_string(Self::path(data_dir)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    }
+    pub fn save(&self, data_dir: &Path) -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(data_dir)?;
+        let p = Self::path(data_dir);
+        std::fs::write(&p, serde_json::to_string_pretty(self).unwrap_or_default())?;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))
+    }
+}
+
 fn d_lang() -> String {
     "fr-FR".into()
 }
@@ -93,12 +137,26 @@ pub fn expand_home(p: &str) -> PathBuf {
 }
 
 impl Config {
+    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(path, toml::to_string_pretty(self)?)?;
+        Ok(())
+    }
     pub fn load(path: &Path) -> anyhow::Result<Config> {
         let txt = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("lecture de {} : {e}", path.display()))?;
         Ok(toml::from_str(&txt)?)
     }
     pub fn tmdb_secret(&self) -> anyhow::Result<String> {
+        let saved = Secrets::load(&self.data_dir).tmdb;
+        if !saved.trim().is_empty() {
+            return Ok(saved.trim().to_string());
+        }
+        if self.tmdb_key_file.is_empty() {
+            return Err(anyhow::anyhow!("clé TMDB non renseignée (Réglages)"));
+        }
         let p = expand_home(&self.tmdb_key_file);
         let s = std::fs::read_to_string(&p)
             .map_err(|e| anyhow::anyhow!("clé TMDB introuvable ({}) : {e}", p.display()))?;

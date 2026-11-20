@@ -5,8 +5,9 @@ use crate::library::{self, LibEntry};
 use crate::parser::{self, Release};
 use crate::tmdb::{self, Candidate, Media, Tmdb};
 use crate::norm;
-use serde::Serialize;
-use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use walkdir::WalkDir;
@@ -54,6 +55,7 @@ pub struct Reconnu {
     pub titre_original: String,
     pub annee: Option<u16>,
     pub categorie: Category,
+    pub affiche: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,15 +82,19 @@ pub enum Decision {
 #[derive(Debug, Clone, Serialize)]
 pub struct Item {
     pub source: PathBuf,
+    /// Dossier d'arrivée dont l'élément provient.
+    pub entree: PathBuf,
     pub nom: String,
     pub release: Release,
     pub reconnu: Option<Reconnu>,
+    /// Fiches TMDB proposées (pour « À trier » et pour l'affiche).
+    pub candidats: Vec<Candidate>,
     pub decision: Decision,
 }
 
 /// Index des films déjà rangés (pour les doublons).
 pub struct MovieIndex {
-    entries: Vec<(String, Option<u16>, u32, PathBuf)>, // titre, année, qualité, chemin
+    pub entries: Vec<(String, Option<u16>, u32, PathBuf)>, // titre, année, qualité, chemin
 }
 
 impl MovieIndex {
@@ -164,19 +170,39 @@ fn renames_for(dir: &Path, from: u16, to: u16) -> Vec<Renommage> {
     out
 }
 
-pub struct Planner<'a> {
-    pub cfg: &'a Config,
-    pub tmdb: &'a Tmdb,
+/// Choix fait à la main (« À trier ») : retenu pour les prochaines fois.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Choice {
+    pub media: Media,
+    pub id: u64,
+    pub category: Option<Category>,
+}
+
+pub fn choice_key(rel: &Release) -> String {
+    format!(
+        "{}|{}|{}",
+        norm::key(&rel.title),
+        rel.year.map(|y| y.to_string()).unwrap_or_default(),
+        if rel.is_series_like() { "tv" } else { "any" }
+    )
+}
+
+pub struct Planner {
+    pub cfg: Arc<Config>,
+    pub tmdb: Arc<Tmdb>,
     movies: MovieIndex,
-    series: BTreeMap<Category, Vec<LibEntry>>,
+    pub series: BTreeMap<Category, Vec<LibEntry>>,
+    choices: Mutex<HashMap<String, Choice>>,
+    choices_path: PathBuf,
 }
 
 fn category_from_mode(mode: &str) -> Option<Category> {
     serde_json::from_value(serde_json::Value::String(mode.to_string())).ok()
 }
 
-impl<'a> Planner<'a> {
-    pub fn new(cfg: &'a Config, tmdb: &'a Tmdb) -> Planner<'a> {
+impl Planner {
+    /// Lit les bibliothèques existantes (peut prendre une vingtaine de secondes sur un NAS : à lancer hors du thread async).
+    pub fn new(cfg: Arc<Config>, tmdb: Arc<Tmdb>) -> Planner {
         let mut roots: Vec<PathBuf> = cfg.film_libraries.clone();
         if let Some(d) = cfg.destinations.get(&Category::Film) {
             roots.push(d.clone());
@@ -187,13 +213,31 @@ impl<'a> Planner<'a> {
                 series.insert(*cat, library::scan_series(dir).unwrap_or_default());
             }
         }
-        Planner { cfg, tmdb, movies: MovieIndex::scan(&roots), series }
+        let choices_path = cfg.data_dir.join("choices.json");
+        let choices = std::fs::read_to_string(&choices_path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        let movies = MovieIndex::scan(&roots);
+        Planner { cfg, tmdb, movies, series, choices: Mutex::new(choices), choices_path }
+    }
+
+    pub fn movie_count(&self) -> usize {
+        self.movies.entries.len()
+    }
+
+    pub fn set_choice(&self, rel: &Release, ch: Choice) {
+        let mut m = self.choices.lock().unwrap();
+        m.insert(choice_key(rel), ch);
+        if let Ok(t) = serde_json::to_string_pretty(&*m) {
+            let _ = std::fs::create_dir_all(&self.cfg.data_dir);
+            let _ = std::fs::write(&self.choices_path, t);
+        }
+    }
+
+    pub fn choices_count(&self) -> usize {
+        self.choices.lock().unwrap().len()
     }
 
     fn rule_category(&self, titles: &[&str]) -> Option<Category> {
-        self.cfg.rules.iter().find_map(|r| {
-            titles.iter().any(|t| norm::similarity(t, &r.title) >= 0.95).then_some(r.category)
-        })
+        self.cfg.rules.iter().find_map(|r| titles.iter().any(|t| norm::similarity(t, &r.title) >= 0.95).then_some(r.category))
     }
 
     /// Cherche le dossier de série existant qui correspond (toutes catégories confondues).
@@ -225,37 +269,45 @@ impl<'a> Planner<'a> {
         names.sort_by_key(|e| e.file_name());
         let mut items = Vec::new();
         for e in names {
-            let name = e.file_name().to_string_lossy().to_string();
-            let path = e.path();
-            let release = parser::parse(&name);
-            let mut item = Item { source: path.clone(), nom: name.clone(), release: release.clone(), reconnu: None, decision: Decision::Ignorer { raison: String::new() } };
-            if library::is_junk_name(&name) {
-                item.decision = Decision::Ignorer { raison: "fichier système".into() };
-                items.push(item);
-                continue;
-            }
-            if path.is_file() && !path.extension().and_then(|x| x.to_str()).map_or(false, parser::is_video_ext) {
-                item.decision = Decision::Ignorer { raison: "pas une vidéo".into() };
-                items.push(item);
-                continue;
-            }
-            match check_settled(&path, input.settle_minutes) {
-                Settle::Pret => {}
-                Settle::Transfert { fichier } => {
-                    item.decision = Decision::Attendre { raison: format!("transfert en cours ({fichier})") };
-                    items.push(item);
-                    continue;
-                }
-                Settle::Attente { minutes } => {
-                    item.decision = Decision::Attendre { raison: format!("modifié récemment, encore {minutes} min") };
-                    items.push(item);
-                    continue;
-                }
-            }
-            item.decision = self.decide(&mut item, input).await;
-            items.push(item);
+            items.push(self.plan_one(input, &e.path()).await);
         }
         Ok(items)
+    }
+
+    /// Décide pour un seul élément du dossier d'arrivée.
+    pub async fn plan_one(&self, input: &Input, path: &Path) -> Item {
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let release = parser::parse(&name);
+        let mut item = Item {
+            source: path.to_path_buf(),
+            entree: input.path.clone(),
+            nom: name.clone(),
+            release,
+            reconnu: None,
+            candidats: vec![],
+            decision: Decision::Ignorer { raison: String::new() },
+        };
+        if library::is_junk_name(&name) {
+            item.decision = Decision::Ignorer { raison: "fichier système".into() };
+            return item;
+        }
+        if path.is_file() && !path.extension().and_then(|x| x.to_str()).map_or(false, parser::is_video_ext) {
+            item.decision = Decision::Ignorer { raison: "pas une vidéo".into() };
+            return item;
+        }
+        match check_settled(path, input.settle_minutes) {
+            Settle::Pret => {}
+            Settle::Transfert { fichier } => {
+                item.decision = Decision::Attendre { raison: format!("transfert en cours ({fichier})") };
+                return item;
+            }
+            Settle::Attente { minutes } => {
+                item.decision = Decision::Attendre { raison: format!("modifié récemment, encore {minutes} min") };
+                return item;
+            }
+        }
+        item.decision = self.decide(&mut item, input).await;
+        item
     }
 
     async fn decide(&self, item: &mut Item, input: &Input) -> Decision {
@@ -263,10 +315,24 @@ impl<'a> Planner<'a> {
         if rel.title.is_empty() {
             return Decision::ATrier { raison: "titre illisible dans le nom".into(), propositions: vec![] };
         }
-        let cands: Vec<Candidate> = match self.tmdb.identify(&rel).await {
-            Ok(c) => c,
-            Err(e) => return Decision::ATrier { raison: format!("TMDB : {e}"), propositions: vec![] },
+        // Un choix déjà fait à la main passe avant tout.
+        let choice = self.choices.lock().unwrap().get(&choice_key(&rel)).cloned();
+        let cands: Vec<Candidate> = if let Some(ch) = &choice {
+            match self.tmdb.details(ch.media, ch.id).await {
+                Ok(mut c) => {
+                    c.sim = 1.0;
+                    c.score = 1.0;
+                    vec![c]
+                }
+                Err(e) => return Decision::ATrier { raison: format!("TMDB : {e}"), propositions: vec![] },
+            }
+        } else {
+            match self.tmdb.identify(&rel).await {
+                Ok(c) => c,
+                Err(e) => return Decision::ATrier { raison: format!("TMDB : {e}"), propositions: vec![] },
+            }
         };
+        item.candidats = cands.clone();
         let props: Vec<String> = cands
             .iter()
             .take(4)
@@ -284,7 +350,10 @@ impl<'a> Planner<'a> {
         if let Some(r) = self.rule_category(&names) {
             cat = r;
         }
-        item.reconnu = Some(Reconnu { tmdb_id: c.id, media: c.media, titre: c.title.clone(), titre_original: c.original_title.clone(), annee: c.year, categorie: cat });
+        if let Some(fc) = choice.as_ref().and_then(|c| c.category) {
+            cat = fc;
+        }
+        item.reconnu = Some(Reconnu { tmdb_id: c.id, media: c.media, titre: c.title.clone(), titre_original: c.original_title.clone(), annee: c.year, categorie: cat, affiche: c.poster.clone() });
         let Some(dest_root) = self.cfg.destinations.get(&cat) else {
             return Decision::ATrier { raison: format!("pas de dossier de destination pour « {} »", cat.label()), propositions: props };
         };
