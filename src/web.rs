@@ -114,6 +114,8 @@ pub async fn serve(cfg_path: PathBuf, bind: String) -> anyhow::Result<()> {
         .route("/api/status", get(api_status))
         .route("/api/scan", post(api_scan))
         .route("/api/plan", get(api_plan))
+        .route("/api/report", get(api_report))
+        .route("/api/mode", post(api_mode))
         .route("/api/choice", post(api_choice))
         .route("/api/tmdb/search", get(api_search))
         .route("/api/tmdb/test", post(api_tmdb_test))
@@ -270,6 +272,99 @@ async fn run_scan(st: S) {
 async fn api_plan(State(st): State<S>) -> R<Value> {
     let items = st.items.read().await;
     Ok(Json(json!({ "items": &*items })))
+}
+
+// ---------- Simulation complète : tout ce qui se passerait, sans rien écrire ----------
+
+async fn api_report(State(st): State<S>) -> R<Value> {
+    let items = st.items.read().await.clone();
+    let cfg = st.cfg.read().await;
+    let (essai, auto, interval, methode) = (cfg.essai, cfg.auto_range, cfg.scan_interval_min, format!("{:?}", cfg.copy_method));
+    drop(cfg);
+    let dernier = st.scan.lock().unwrap().last;
+    const MAX_LIGNES: usize = 400;
+    let (mut fichiers, mut octets, mut renommes, mut nouveaux, mut existants) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut lignes = Vec::new();
+    let mut compte = std::collections::BTreeMap::<&str, u64>::new();
+    for it in &items {
+        let titre = it.reconnu.as_ref().map(|r| match r.annee { Some(a) => format!("{} ({a})", r.titre), None => r.titre.clone() });
+        let (kind, vers, raison, nb, taille, changes) = match &it.decision {
+            Decision::Ranger { vers, nouveau_dossier, renommages, fichiers: places, .. } => {
+                let lf = crate::plan::list_files(&it.source);
+                let nb = lf.len() as u64;
+                let taille: u64 = lf.iter().map(|(_, n)| *n).sum();
+                fichiers += nb;
+                octets += taille;
+                if *nouveau_dossier { nouveaux += 1 } else { existants += 1 }
+                let mut ch: Vec<(String, String)> = if !places.is_empty() {
+                    places.iter().map(|p| (p.src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), p.dst.to_string_lossy().to_string())).collect()
+                } else {
+                    renommages.iter().map(|r| (r.ancien.clone(), r.nouveau.clone())).collect()
+                };
+                ch.retain(|(a, b)| a != b);
+                renommes += ch.len() as u64;
+                ch.truncate(60);
+                ("ranger", Some(vers.to_string_lossy().to_string()), if *nouveau_dossier { "nouveau dossier".to_string() } else { "dossier existant".to_string() }, nb, taille, ch)
+            }
+            Decision::Doublon { existant, raison } => ("doublon", Some(existant.to_string_lossy().to_string()), raison.clone(), 0, 0, vec![]),
+            Decision::ATrier { raison, .. } => ("a_trier", None, raison.clone(), 0, 0, vec![]),
+            Decision::Attendre { raison } => ("attendre", None, raison.clone(), 0, 0, vec![]),
+            Decision::Ignorer { raison } => ("ignorer", None, raison.clone(), 0, 0, vec![]),
+            Decision::Fait { vers } => ("fait", Some(vers.to_string_lossy().to_string()), String::new(), 0, 0, vec![]),
+        };
+        *compte.entry(kind).or_default() += 1;
+        if lignes.len() < MAX_LIGNES * 4 {
+            lignes.push(json!({
+                "nom": it.nom, "decision": kind, "titre": titre, "vers": vers, "raison": raison,
+                "fichiers": nb, "octets": taille, "changements": changes.iter().map(|(a, b)| json!({"de": a, "vers": b})).collect::<Vec<_>>(),
+            }));
+        }
+    }
+    Ok(Json(json!({
+        "dernier_scan": dernier, "essai": essai, "auto_range": auto, "intervalle_min": interval, "methode": methode,
+        "totaux": { "elements": items.len(), "compte": compte, "fichiers": fichiers, "octets": octets, "renommes": renommes,
+                    "nouveaux_dossiers": nouveaux, "dossiers_existants": existants },
+        "lignes": lignes,
+    })))
+}
+
+#[derive(Deserialize)]
+struct ModeReq {
+    /// "simulation" | "manuel" | "auto"
+    mode: String,
+    interval_min: Option<u64>,
+    confirm: Option<bool>,
+}
+
+/// Choisit le mode de fonctionnement. Passer en réel exige : une analyse déjà faite (donc une simulation vue) + une confirmation explicite.
+async fn api_mode(State(st): State<S>, Json(req): Json<ModeReq>) -> R<Value> {
+    let mut cfg = st.cfg.write().await;
+    match req.mode.as_str() {
+        "simulation" => {
+            cfg.essai = true;
+            cfg.auto_range = false;
+        }
+        "manuel" | "auto" => {
+            if req.confirm != Some(true) {
+                return Err(bad("confirmation requise pour passer en mode réel"));
+            }
+            if st.scan.lock().unwrap().last.is_none() {
+                return Err(bad("lancez d'abord une analyse et relisez la simulation avant de passer en mode réel"));
+            }
+            cfg.essai = false;
+            cfg.auto_range = req.mode == "auto";
+            if req.mode == "auto" {
+                let n = req.interval_min.unwrap_or(if cfg.scan_interval_min > 0 { cfg.scan_interval_min } else { 15 });
+                cfg.scan_interval_min = n.clamp(1, 1440);
+            }
+        }
+        _ => return Err(bad("mode inconnu")),
+    }
+    cfg.save(&st.cfg_path).map_err(err500)?;
+    let (essai, auto, n) = (cfg.essai, cfg.auto_range, cfg.scan_interval_min);
+    drop(cfg);
+    st.log("info", format!("Mode choisi : {} (essai à blanc : {}, rangement automatique : {}, analyse toutes les {} min)", req.mode, essai, auto, n));
+    Ok(Json(json!({ "ok": true, "essai": essai, "auto_range": auto, "intervalle_min": n })))
 }
 
 // ---------- À trier ----------

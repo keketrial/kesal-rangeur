@@ -188,7 +188,7 @@ pub struct Placement {
 }
 
 /// Fichiers d'un élément (chemins relatifs et tailles). Un fichier seul donne son propre nom.
-fn list_files(source: &Path) -> Vec<(PathBuf, u64)> {
+pub fn list_files(source: &Path) -> Vec<(PathBuf, u64)> {
     if source.is_file() {
         let sz = std::fs::metadata(source).map(|m| m.len()).unwrap_or(0);
         return vec![(PathBuf::from(source.file_name().unwrap_or_default()), sz)];

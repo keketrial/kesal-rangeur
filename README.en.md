@@ -8,6 +8,7 @@ Why? Sonarr and Radarr rely on TheTVDB, which often returns English titles. `kes
 
 ## Features
 
+- **Full simulation**: a tab shows everything that would happen (files to transfer, size, new folders, renames, duplicates, to-sort), downloadable report. Only then choose the mode: simulation / manual / automatic.
 - Watches one or more **incoming folders** (Resilio Sync, torrent client…).
 - **Waits for transfers to finish**: no temporary file (`.!sync`, `.part`…) and nothing modified for 30 min (configurable). Checked again right before copying.
 - **Parses release names**: movie or series, season, full pack, quality, language tags.

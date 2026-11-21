@@ -8,6 +8,7 @@
 
 ## Qué hace
 
+- **Simulación completa**: una pestaña muestra todo lo que ocurriría (archivos a transferir, tamaño, carpetas nuevas, renombrados, duplicados, por clasificar), informe descargable. Solo después se elige el modo: simulación / manual / automático.
 - Vigila una o varias **carpetas de entrada** (Resilio Sync, cliente torrent…).
 - **Espera a que termine la transferencia**: sin archivos temporales (`.!sync`, `.part`…) y sin cambios durante 30 min (configurable). Se comprueba de nuevo justo antes de copiar.
 - **Reconoce** película o serie, temporada, pack completo, calidad e idioma a partir del nombre de la release.

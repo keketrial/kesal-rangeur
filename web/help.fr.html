@@ -1,176 +1,79 @@
-<h3 id="debut">Pour bien démarrer</h3>
-<p><b>kesal-rangeur</b> surveille un ou plusieurs <b>dossiers d'arrivée</b> (par exemple celui où Resilio Sync dépose vos téléchargements), reconnaît ce qui arrive, et le range au bon endroit de votre bibliothèque, avec les titres de <b>TMDB</b> dans votre langue.</p>
+<h3 id="debut">Démarrer</h3>
+<p>L'appli surveille un <b>dossier d'arrivée</b> (ex. Resilio), reconnaît chaque film ou série avec <b>TMDB</b> et le range dans votre bibliothèque, avec les titres dans votre langue.</p>
 <ol>
-  <li>Renseignez votre <a href="#" data-help="tmdb">clé TMDB</a> (gratuite, 5 minutes).</li>
-  <li>Choisissez le <a href="#" data-help="arrivee">dossier d'arrivée</a>.</li>
-  <li>Choisissez les <a href="#" data-help="destinations">dossiers de destination</a> (films, séries…).</li>
-  <li>Cliquez sur <b>Analyser maintenant</b> et regardez l'onglet <b>En attente</b> : c'est ce que l'appli <i>ferait</i>.</li>
-  <li>Quand le résultat vous convient seulement, on passe de l'<a href="#" data-help="essai">essai à blanc</a> à la vraie copie.</li>
+  <li>Collez votre <a href="#" data-help="tmdb">clé TMDB</a> (Réglages).</li>
+  <li>Choisissez le <a href="#" data-help="arrivee">dossier d'arrivée</a> et les <a href="#" data-help="destinations">destinations</a>.</li>
+  <li>Cliquez <b>Analyser maintenant</b>, puis ouvrez <b>Simulation</b>.</li>
+  <li>Tout vous convient ? Choisissez le <a href="#" data-help="simulation">mode</a>.</li>
 </ol>
-<div class="note">Le principe : <b>vous gardez la main</b>. Au moindre doute, l'appli ne range pas : elle met l'élément dans <b>À trier</b> et attend votre choix.</div>
+<div class="note">Au moindre doute, l'appli ne range pas : l'élément va dans <b>À trier</b>.</div>
 
-<h3 id="essai">Mode essai à blanc</h3>
-<p>Dans ce mode (activé par défaut), l'appli <b>lit</b> vos dossiers et interroge TMDB, puis affiche ce qu'elle ferait. Elle <b>ne copie, ne déplace, ne renomme et ne supprime rien</b>. Aucun fichier n'est écrit dans votre bibliothèque.</p>
-<p>Utilisez-le autant que vous voulez : changez un réglage, relancez <b>Analyser maintenant</b>, comparez. Les « avant → après » de l'onglet <b>En attente</b> sont exactement ce qui serait exécuté.</p>
+<h3 id="simulation">Simulation et modes</h3><span id="essai"></span><span id="auto"></span><span id="fonctionnement"></span>
+<p>L'onglet <b>Simulation</b> montre tout ce qui se passerait : fichiers à transférer, volume, nouveaux dossiers, renommages, doublons, éléments à trier. Rapport téléchargeable.</p>
+<ul>
+  <li><b>Simulation seulement</b> (défaut) : rien n'est écrit.</li>
+  <li><b>Manuel</b> : vous cliquez sur « Ranger ».</li>
+  <li><b>Automatique</b> : analyse toutes les N minutes et range seul ce qui est sûr. Doublons et doutes ne sont jamais rangés seuls.</li>
+</ul>
+<p>Chaque rangement est annulable (Historique).</p>
 
-<h3 id="tmdb">Clé TMDB (titres, affiches, genres)</h3>
-<p>TMDB (The Movie Database) est la base qui donne les titres dans votre langue (par exemple « GIGN » et pas « Elite Force »), les affiches et les genres. L'accès est <b>gratuit pour un usage non commercial</b>. Chaque utilisateur crée sa propre clé : aucune n'est fournie avec l'appli.</p>
-<h4>Créer votre clé</h4>
+<h3 id="tmdb">Clé TMDB</h3><span id="langue"></span>
 <ol>
-  <li>Créez un compte gratuit sur <a href="https://www.themoviedb.org/signup" target="_blank" rel="noopener">themoviedb.org</a> et confirmez votre e-mail.</li>
-  <li>Allez dans <b>Paramètres → API</b> (<a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org/settings/api</a>).</li>
-  <li>Cliquez sur <b>Créer</b>, choisissez <b>Developer</b>, acceptez les conditions.</li>
-  <li>Remplissez le formulaire : nom de l'application (« kesal-rangeur »), une adresse (n'importe laquelle, par exemple celle de votre dépôt), un résumé (« rangement de mes médias, usage personnel »), usage non commercial.</li>
-  <li>TMDB affiche deux valeurs : la <b>Clé API</b> (32 caractères) et le <b>Jeton d'accès en lecture à l'API</b> (très long, commence par <code>eyJ</code>).</li>
+  <li>Compte gratuit sur <a href="https://www.themoviedb.org/signup" target="_blank" rel="noopener">themoviedb.org</a>.</li>
+  <li><a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Paramètres → API</a> → <b>Créer</b> → Developer, usage non commercial.</li>
+  <li>Copiez la <b>Clé API</b> ou le <b>Jeton d'accès</b> (<code>eyJ…</code>), collez-le dans Réglages, puis <b>Tester</b>.</li>
 </ol>
-<p><b>Collez l'une ou l'autre</b> dans Réglages → TMDB, puis cliquez <b>Tester</b>. Les deux fonctionnent. La clé est rangée dans un fichier réservé à l'appli (<code>secrets.json</code>, lisible par vous seul) et n'est jamais affichée en entier ni envoyée ailleurs que chez TMDB.</p>
-<div class="warn">Ne partagez jamais votre clé (captures d'écran, dépôt GitHub, forum). Si elle fuit, supprimez-la sur le site TMDB et créez-en une autre.</div>
-<p>L'appli garde les réponses de TMDB en mémoire pendant 30 jours et reste très en dessous de la limite (environ 40 requêtes par seconde).</p>
+<p>La <b>langue</b> des titres se choisit dans Réglages. Ne partagez jamais votre clé.</p>
 
-<h3 id="langue">Langue des titres</h3>
-<p>C'est la langue des titres, des résumés et des noms de dossiers créés. Choisissez <code>fr-FR</code> (français), <code>es-ES</code> (espagnol), <code>en-US</code>… Si TMDB n'a pas de titre dans cette langue, il donne le titre original.</p>
-
-<h3 id="arrivee">Dossiers d'arrivée</h3>
-<p>C'est le dossier où arrivent vos téléchargements : dossier synchronisé par Resilio, dossier de votre client torrent… Vous pouvez en ajouter plusieurs, chacun avec ses propres réglages. Utilisez <b>Parcourir…</b> pour le choisir.</p>
-<p>Dans l'appli installée avec Docker, le chemin est celui <b>vu depuis le conteneur</b> (par exemple <code>/vod/telechargement/…</code>), pas celui de votre PC. Voir la section <a href="#" data-help="docker">Docker</a>.</p>
-<div class="note">Avec Resilio en lecture + écriture, supprimer ou déplacer un fichier de ce dossier le supprime aussi sur la seedbox. C'est pourquoi le choix « <b>Copier</b> » est conseillé.</div>
-
-<h3 id="modes">Mode : automatique ou type imposé</h3>
+<h3 id="arrivee">Dossiers</h3><span id="destinations"></span><span id="modes"></span><span id="action"></span><span id="calme"></span><span id="regles"></span><span id="doublons"></span>
 <ul>
-  <li><b>Automatique</b> : l'appli devine la catégorie avec TMDB (film ou série, genre Animation, Documentaire, Reality, Talk…).</li>
-  <li><b>Tout va dans : …</b> : tout ce qui arrive dans ce dossier part dans la destination choisie, sans deviner. Pratique pour un dossier dédié (par exemple « Spectacles »).</li>
-</ul>
-<p>Dans les deux cas, les <a href="#" data-help="regles">règles personnelles</a> passent avant.</p>
-
-<h3 id="action">Copier ou déplacer</h3>
-<ul>
-  <li><b>Copier (l'original reste)</b> : recommandé. Sur le même volume Btrfs (comme un Synology), la copie est <b>instantanée et ne prend pas de place en plus</b> (copie « reflink », sinon lien physique). L'original reste dans le dossier d'arrivée, donc Resilio n'est pas perturbé.</li>
-  <li><b>Déplacer</b> : l'original disparaît du dossier d'arrivée, uniquement après vérification de la copie.</li>
-</ul>
-<p>Si la copie échoue, l'original n'est jamais touché et l'élément passe en erreur, avec un bouton pour réessayer.</p>
-
-<h3 id="calme">Délai de calme (fin de transfert)</h3>
-<p>L'appli ne range jamais un élément qui n'a pas fini d'arriver. Elle attend deux choses :</p>
-<ol><li>qu'il n'y ait <b>aucun fichier temporaire</b> (<code>.!sync</code> de Resilio, <code>.part</code>, <code>.tmp</code>, <code>.crdownload</code>…) ;</li>
-<li>qu'<b>aucun fichier n'ait changé depuis N minutes</b> (30 par défaut). Utile pour une saison dont les épisodes arrivent l'un après l'autre.</li></ol>
-<p>Mettez 0 pour ne pas attendre (déconseillé avec une synchronisation).</p>
-
-<h3 id="destinations">Dossiers de destination</h3>
-<p>Un dossier par catégorie : film, série, dessin animé, télé / téléréalité, documentaire, spectacle. Laissez vide une catégorie que vous n'utilisez pas : un élément de cette catégorie ira dans <b>À trier</b>.</p>
-<ul>
-  <li><b>Séries</b> : si le dossier de la série existe déjà (même sous un autre nom : « petite maison de la prairie », « Dawson/S01 »…), la nouvelle saison y est ajoutée. Sinon un dossier « Titre (année) » est créé. Les remakes de même titre sont distingués par l'année.</li>
-  <li><b>Films</b> : posés dans le dossier de destination avec leur nom d'origine.</li>
-  <li>Quand TMDB a <b>une fiche par saison</b> (téléfilms numérotés comme « Meurtres à Nordholm 1, 2, 3, 4 »), un dossier est créé par fiche et les épisodes sont renumérotés en S01, pour que Plex et Jellyfin les retrouvent.</li>
-</ul>
-
-<h3 id="nommage">Noms des fichiers (comme FileBot)</h3>
-<p>Par défaut, l'appli <b>garde les noms d'origine</b> des releases. Vous pouvez lui faire renommer et organiser les fichiers à la manière de FileBot, avec <b>l'aperçu avant → après</b> dans l'onglet « En attente » (clic sur « fichier(s) renommé(s) »).</p>
-<ul>
-<li><b>FileBot</b> : reprend les exemples de la documentation de FileBot : film <code>Avatar (2009).mkv</code>, épisode <code>Dark Angel - S03E01 - Labyrinthe.mkv</code> (dans le dossier de la série).</li>
-<li><b>Plex</b> : un dossier par film (<code>Avatar (2009)/Avatar (2009).mkv</code>), un dossier par saison dans la série (<code>Season 01/</code>). Si la série existe déjà avec un autre style (<code>S01</code>, <code>Saison_01</code>, <code>Season 1</code>…), c'est <b>ce style qui est suivi</b>.</li>
-<li><b>Personnalisé</b> : vos propres formats avec les variables de FileBot.</li>
-</ul>
-<h4>Variables</h4>
-<p><code>{n}</code> titre (dans votre langue) · <code>{y}</code> année · <code>{ny}</code> « Titre (année) » · <code>{s}</code> / <code>{s00}</code> saison (1 / 01) · <code>{e}</code> / <code>{e00}</code> épisode · <code>{s00e00}</code> S01E01 · <code>{sxe}</code> 1x01 · <code>{t}</code> titre de l'épisode · <code>{vf}</code> 1080p · <code>{source}</code> · <code>{vc}</code> codec · <code>{group}</code> équipe. Un <code>/</code> crée un dossier.</p>
-<ul>
-<li>Un fichier de plusieurs épisodes donne <code>S01E01-E02</code> et les deux titres reliés par « &amp; ».</li>
-<li>Si TMDB n'a pas de titre pour un épisode, il est simplement omis (pas de tiret orphelin).</li>
-<li>Les caractères interdits (<code>: / \ * ? " &lt; &gt; |</code>) sont remplacés.</li>
-<li>Seuls les <b>vidéos et sous-titres</b> sont rangés ; les autres fichiers (nfo, images…) sont ignorés. Les sous-titres gardent leur langue (<code>.fr.srt</code>).</li>
-<li>Si l'appli n'arrive pas à identifier un épisode dans le nom d'un fichier, ou si un dossier de film contient plusieurs grosses vidéos, l'élément va dans <b>À trier</b> au lieu d'être renommé au hasard.</li>
-<li>Le <b>dossier d'une série déjà présente est toujours réutilisé tel quel</b> ; le format « nouveau dossier de série » ne sert que pour une série nouvelle.</li>
-</ul>
-<div class="note">Le nommage s'applique à la copie : l'original garde son nom d'origine dans le dossier d'arrivée (Resilio n'est pas perturbé).</div>
-
-<h3 id="doublons">Doublons</h3>
-<p>Un film est identifié par son titre et son année, un épisode par la série + SxxEyy. Si l'élément est déjà dans votre bibliothèque, il apparaît dans <b>Doublons</b> et n'est pas repris. Si la nouvelle version est de meilleure qualité, la raison l'indique.</p>
-<p>Pour que les anciens films soient pris en compte, ajoutez leurs dossiers dans « Films déjà présents ailleurs » (par exemple un dossier d'archives).</p>
-
-<h3 id="regles">Règles personnelles</h3>
-<p>Une règle force la catégorie d'un titre : <i>« Pékin Express → télé / téléréalité »</i>. Le titre est comparé sans tenir compte des accents ni des majuscules. Une règle l'emporte sur TMDB.</p>
-
-<h3 id="attente">Onglet « En attente »</h3>
-<p>La liste de ce qui est arrivé, avec ce qui a été reconnu. Filtres : <b>À ranger</b>, <b>Doublons</b>, <b>À trier</b>, <b>En attente</b> (transfert pas fini), <b>Ignorés</b> (fichiers système…).</p>
-<p>Chaque ligne montre le nom d'origine, la fiche TMDB reconnue (avec affiche), la catégorie et le <b>chemin d'arrivée</b>. Le bouton <b>Corriger la fiche…</b> permet de choisir une autre fiche.</p>
-
-<h3 id="trier">Onglet « À trier »</h3>
-<p>L'appli hésite quand plusieurs fiches se ressemblent (deux séries « The Body » la même année), quand rien ne correspond, ou quand une intégrale arrive pour une série déjà présente. Elle vous montre les fiches avec leur affiche et leur résumé : cliquez sur <b>C'est celui-ci</b>.</p>
-<p>Votre choix est <b>retenu</b> : la prochaine fois, elle ne redemandera pas. Vous pouvez aussi changer la catégorie ou chercher à la main un autre titre.</p>
-
-<h3 id="historique">Onglet « Historique »</h3>
-<p>Chaque rangement réel y est inscrit : avant → après, catégorie, taille, motif, avec un bouton <b>Annuler</b>. En essai à blanc, il reste vide puisque rien n'est exécuté.</p>
-<ul><li><b>Annuler</b> retire ce que l'appli a créé dans la bibliothèque (et les dossiers qu'elle avait créés, s'ils sont vides). L'original dans le dossier d'arrivée n'est pas touché. L'annulation est refusée si un fichier rangé a été modifié depuis.</li>
-<li>Un rangement en <b>Erreur</b> n'a rien laissé à moitié fait. L'appli réessaie 3 fois pour une panne passagère ; ensuite, le bouton <b>Réessayer</b> relance.</li></ul>
-
-<h3 id="bibliotheque">Onglet « Bibliothèque »</h3>
-<p>Ce que l'appli a compris de vos dossiers existants : titre lu, année, saisons trouvées. Les lignes marquées « ? » n'ont aucune saison détectée : c'est souvent un film rangé par erreur dans les séries, ou un dossier vide. Cette lecture sert à retrouver le bon dossier pour ajouter une saison et à repérer les doublons.</p>
-
-<h3 id="fonctionnement">Fonctionnement (réglages avancés)</h3>
-<ul>
-<li><b>Mode essai à blanc</b> : voir la section dédiée. Quand vous le décochez, l'appli demande une confirmation, puis les boutons « Ranger » deviennent actifs.</li>
-<li><b>Méthode de copie</b> : voir <a href="#" data-help="methode">ci-dessous</a>.</li>
-<li><b>Analyse automatique</b> : voir <a href="#" data-help="auto">Analyse et rangement automatiques</a>.</li>
+  <li><b>Arrivée</b> : là où tombent vos téléchargements (avec Docker, le chemin vu <i>du conteneur</i>).</li>
+  <li><b>Destinations</b> : un dossier par catégorie. Une série existante reçoit la nouvelle saison ; sinon un dossier « Titre (année) » est créé.</li>
+  <li><b>Copier</b> (conseillé) : l'original reste. <b>Déplacer</b> : après vérification de la copie.</li>
+  <li><b>Délai de calme</b> : un élément n'est rangé que s'il n'a pas bougé depuis N minutes et sans fichier temporaire.</li>
+  <li><b>Règles</b> : forcent une catégorie (« Pékin Express → télé »).</li>
+  <li><b>Doublons</b> : ce qui est déjà dans la bibliothèque n'est jamais recopié.</li>
 </ul>
 
 <h3 id="methode">Méthode de copie</h3>
-<ul>
-<li><b>Automatique</b> (conseillé) : essaie d'abord le <b>reflink</b> (copie instantanée sans place en plus, sur Btrfs ou XFS), puis le <b>lien physique</b> (même fichier à deux noms, sans place en plus, même volume obligatoire), puis la <b>copie normale</b>.</li>
-<li><b>Reflink / Lien physique / Copie seulement</b> : pour imposer une méthode. Si elle est impossible, le rangement échoue avec un message clair, sans rien laisser derrière.</li>
-</ul>
-<div class="note">Avec un lien physique, supprimer le fichier d'un côté ne supprime pas l'autre : le contenu n'est effacé que quand les deux noms ont disparu. L'annulation d'un rangement ne retire que le nom créé dans la bibliothèque.</div>
+<p><b>Automatique</b> : reflink (instantané, sans place en plus, Btrfs/XFS), sinon lien physique (même volume), sinon copie normale. Avec Docker, utilisez <b>un seul montage</b> pour tout.</p>
 
-<h3 id="auto">Analyse et rangement automatiques</h3>
-<p><b>Analyse automatique toutes les N minutes</b> : l'appli regarde seule les dossiers d'arrivée (0 = seulement quand vous cliquez). <b>Ranger seul ce qui est sûr</b> : après chaque analyse, les éléments « À ranger » sont rangés sans bouton. Les doublons, les doutes et les transferts en cours ne sont jamais rangés seuls. Ignoré tant que l'essai à blanc est actif.</p>
+<h3 id="nommage">Noms des fichiers</h3>
+<p>Par défaut, les noms d'origine sont gardés. Les préréglages <b>FileBot</b> et <b>Plex</b> renomment à la manière de FileBot, avec l'aperçu avant → après. Variables : <code>{n}</code> titre · <code>{y}</code> année · <code>{s00e00}</code> S01E01 · <code>{t}</code> titre d'épisode.</p>
+
+<h3 id="attente">Les onglets</h3><span id="trier"></span><span id="historique"></span><span id="bibliotheque"></span>
+<ul>
+  <li><b>En attente</b> : le détail de chaque élément.</li>
+  <li><b>À trier</b> : choisissez la bonne fiche, l'appli s'en souvient.</li>
+  <li><b>Historique</b> : annuler un rangement.</li>
+  <li><b>Bibliothèque</b> : ce que l'appli a compris de vos dossiers.</li>
+</ul>
 
 <h3 id="services">Plex, Jellyfin, Home Assistant</h3>
-<p>Après un rangement, l'appli pourra prévenir vos lecteurs pour qu'ils rafraîchissent <b>seulement le dossier concerné</b>.</p>
-<h4>Plex</h4>
-<ol><li>Adresse : <code>http://adresse-de-votre-serveur:32400</code>.</li>
-<li>Jeton : dans Plex Web, ouvrez un film → menu <b>⋯ → Obtenir les infos → Afficher le XML</b> ; dans l'adresse de la page, copiez la valeur après <code>X-Plex-Token=</code>.</li></ol>
-<h4>Jellyfin</h4>
-<ol><li>Adresse : <code>http://adresse:8096</code>.</li><li>Clé : <b>Tableau de bord → Avancé → Clés API → +</b>, donnez-lui le nom « kesal-rangeur ».</li></ol>
-<h4>Home Assistant (facultatif, pour une notification)</h4>
-<ol><li>Adresse : <code>http://adresse:8123</code>.</li><li>Jeton : votre profil → <b>Sécurité → Jetons d'accès de longue durée → Créer</b>.</li></ol>
-<p>Ces jetons sont rangés dans <code>secrets.json</code> (lisible par vous seul), jamais dans le fichier de réglages. Ces branchements ne sont pas encore actifs dans cette version.</p>
+<p>Après un rangement, le dossier concerné est rafraîchi (facultatif). <b>Plex</b> : adresse <code>:32400</code> + jeton (<code>X-Plex-Token</code>). <b>Jellyfin</b> : <code>:8096</code> + clé (Tableau de bord → Avancé → Clés API). <b>Home Assistant</b> : <code>:8123</code> + jeton longue durée. Bouton <b>Tester</b> dans Réglages.</p>
 
-<h3 id="docker">Installation avec Docker</h3>
-<p>Un exemple <code>docker-compose.yml</code> :</p>
+<h3 id="docker">Docker</h3>
 <pre><code>services:
   rangeur:
     image: ghcr.io/VOTRE-COMPTE/kesal-rangeur:latest
     ports: ["3050:3050"]
-    user: "1026:100"          # votre PUID:PGID
+    user: "1026:100"
     volumes:
-      - ./config:/config       # réglages, secrets, cache TMDB, historique
-      - /volume1/VOTRE_DOSSIER:/media   # <b>un seul</b> montage pour arrivée ET destinations
+      - ./config:/config
+      - /volume1/MEDIAS:/media   # un seul montage
     environment:
       KESAL_CONFIG: /config/config.toml</code></pre>
-<div class="warn"><b>Un seul montage pour tout.</b> Pour que la copie soit instantanée (reflink ou lien physique), l'arrivée et les destinations doivent être sur le <b>même volume</b>, et vus par le conteneur dans <b>un même montage</b>. Avec plusieurs montages séparés, Linux traite chaque montage comme un volume distinct et la copie devient une vraie copie, lente et qui double l'espace utilisé.</div>
-<p>L'interface est ensuite sur <code>http://adresse-du-serveur:3050</code>.</p>
 
-<h3 id="mcp">Assistant IA (MCP)</h3>
-<p>Un assistant IA (Claude Code, Claude Desktop…) peut vous aider à configurer et utiliser l'appli, grâce à la commande <code>kesal-rangeur mcp</code> (protocole MCP). Elle ne fait que relayer vers cette appli, qui doit donc déjà tourner.</p>
-<pre><code>claude mcp add kesal-rangeur -- kesal-rangeur mcp
-# avec Docker :
-claude mcp add kesal-rangeur -- docker exec -i kesal-rangeur kesal-rangeur mcp</code></pre>
-<p>Si l'appli n'est pas sur <code>http://127.0.0.1:3050</code>, ajoutez la variable <code>KESAL_URL</code>. Demandez ensuite à l'assistant d'utiliser le prompt <code>setup_kesal_rangeur</code> : il vous guide pas à pas.</p>
-<ul><li>L'assistant <b>garde l'essai à blanc actif</b> et ne passe aux vraies copies qu'avec votre accord explicite.</li>
-<li>Vos clés (TMDB, Plex…) se saisissent de préférence ici, dans les Réglages, plutôt que dans la discussion.</li></ul>
-
-<h3 id="securite">Sécurité</h3>
+<h3 id="securite">Sécurité et assistant IA</h3><span id="mcp"></span>
 <ul>
-<li><b>Mot de passe</b> : définissez la variable <code>KESAL_PASSWORD</code> au lancement (par exemple dans le <code>docker-compose.yml</code>). Toute l'interface demandera alors ce mot de passe (n'importe quel identifiant). Fortement conseillé dès que l'appli est sur un réseau partagé.</li>
-<li><b>Nom de domaine</b> : l'accès par adresse IP, <code>localhost</code>, nom court ou <code>.local</code> marche tel quel. Si vous passez par un nom de domaine (tunnel, reverse proxy), ajoutez-le à <code>KESAL_ALLOWED_HOSTS</code> (séparés par des virgules) ; sinon il est refusé (protection contre le « DNS rebinding »).</li>
-<li>Les actions venant d'un autre site web sont refusées (contrôle de l'origine).</li>
-<li>Les <b>jetons</b> (Plex, Jellyfin, Home Assistant) sont liés à leur adresse : <b>si vous changez l'adresse, saisissez de nouveau le jeton</b> (l'ancien est effacé pour qu'il ne puisse pas partir ailleurs). Ils sont rangés dans <code>secrets.json</code> (droits 600), jamais dans le fichier de réglages ni dans les journaux, et l'interface n'en montre aucune partie.</li>
-<li>L'explorateur de dossiers liste les dossiers du serveur : une raison de plus de protéger l'accès.</li>
-<li>Les liens symboliques dans le dossier d'arrivée sont ignorés (ils pourraient pointer hors du dossier).</li>
-<li>Même avec un mot de passe, ne l'ouvrez pas directement sur Internet sans VPN ou reverse proxy HTTPS : le mot de passe circulerait en clair.</li>
+  <li><code>KESAL_PASSWORD</code> : mot de passe de l'interface (conseillé hors réseau de confiance).</li>
+  <li>Nom de domaine : à ajouter dans <code>KESAL_ALLOWED_HOSTS</code>.</li>
+  <li>Assistant IA : <code>claude mcp add kesal-rangeur -- kesal-rangeur mcp</code>. Il ne désactive jamais la simulation sans votre accord.</li>
 </ul>
 
-<h3 id="faq">Questions fréquentes</h3>
-<h4>« Aucune fiche TMDB trouvée »</h4><p>Le titre du fichier est trop différent. Utilisez <b>Corriger la fiche…</b> et cherchez à la main : l'appli retiendra le choix.</p>
-<h4>Le titre est en anglais</h4><p>TMDB n'a pas de titre dans votre langue pour cette œuvre : il renvoie l'original. Vous pouvez imposer un nom avec une fiche corrigée.</p>
-<h4>Un élément reste « En attente »</h4><p>Il est encore en cours de transfert ou a changé il y a moins de N minutes. Relancez l'analyse plus tard.</p>
-<h4>Pourquoi un « doublon » alors que je ne trouve pas le fichier ?</h4><p>Cliquez sur la ligne : le chemin de l'existant est indiqué. Si c'est une erreur, corrigez la fiche.</p>
-<h4>Où sont mes réglages ?</h4><p>Dans le dossier de configuration : <code>config.toml</code> (réglages), <code>secrets.json</code> (clés), <code>choices.json</code> (vos choix retenus), <code>tmdb-cache.json</code> (cache).</p>
+<h3 id="faq">Dépannage</h3>
+<ul>
+  <li><b>Aucune fiche trouvée / mauvais titre</b> : « Corriger la fiche… ».</li>
+  <li><b>Reste « En attente »</b> : transfert en cours, réessayez plus tard.</li>
+  <li><b>Doublon inattendu</b> : la ligne indique le chemin existant.</li>
+</ul>

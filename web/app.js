@@ -23,13 +23,13 @@ const short = (p, n = 70) => { p = String(p); return p.length > n ? "…" + p.sl
 
 // ---------- navigation ----------
 const TABS = [
-  ["accueil", "tab_home"], ["plan", "tab_plan"], ["trier", "tab_sort"], ["historique", "tab_history"],
+  ["accueil", "tab_home"], ["simulation", "tab_sim"], ["plan", "tab_plan"], ["trier", "tab_sort"], ["historique", "tab_history"],
   ["bibliotheque", "tab_library"], ["reglages", "tab_settings"], ["journal", "tab_log"], ["apropos", "tab_about"],
 ];
 const VIEWS = {}; // rempli plus bas : id → fonction qui dessine l'onglet
 const dirty = new Set(); // onglets à redessiner la prochaine fois qu'on les ouvre
 const scrollOf = {};
-function invalidate(...ids) { (ids.length ? ids : Object.keys(VIEWS)).forEach((i) => dirty.add(i)); }
+function invalidate(...ids) { (ids.length ? ids : Object.keys(VIEWS)).forEach((i) => dirty.add(i)); if (!ids.length || ids.includes("plan")) dirty.add("simulation"); }
 function route() {
   scrollOf[S.view] = window.scrollY;
   const v = (location.hash || "#/accueil").replace("#/", "").split("?")[0];
@@ -119,6 +119,63 @@ function vHome(v) {
       <span class="tag ${st.plex ? "ok" : ""}">Plex ${st.plex ? "configuré" : "non configuré"}</span>
       <span class="tag ${st.jellyfin ? "ok" : ""}">Jellyfin ${st.jellyfin ? "configuré" : "non configuré"}</span></div>`;
   v.querySelectorAll("[data-filter]").forEach((a) => a.addEventListener("click", () => { if (S.filter !== a.dataset.filter) { S.filter = a.dataset.filter; invalidate("plan"); } }));
+}
+
+// ---------- Simulation complète + choix du mode ----------
+const GO = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + " Go" : n >= 1e6 ? Math.round(n / 1e6) + " Mo" : n + " o";
+function rapportTexte(r) {
+  const T = r.totaux, c = T.compte || {}, L = [];
+  L.push(`SIMULATION kesal-rangeur — ${new Date().toLocaleString()}`, `Rien n'a été copié, déplacé ni supprimé.`, "");
+  L.push(`À ranger : ${c.ranger || 0} élément(s) · ${T.fichiers} fichier(s) · ${GO(T.octets)} · ${T.nouveaux_dossiers} nouveau(x) dossier(s) · ${T.renommes} fichier(s) renommé(s)`);
+  L.push(`Doublons : ${c.doublon || 0} · À trier : ${c.a_trier || 0} · En attente : ${c.attendre || 0} · Ignorés : ${c.ignorer || 0}`, "");
+  const sec = (k, titre, f) => { const l = r.lignes.filter((x) => x.decision === k); if (!l.length) return; L.push(`== ${titre} (${l.length}) ==`); l.forEach((x) => L.push(...f(x))); L.push(""); };
+  sec("ranger", "À RANGER", (x) => [`• ${x.nom}`, `    → ${x.vers}  [${x.raison}, ${x.fichiers} fichier(s), ${GO(x.octets)}]`, ...x.changements.map((m) => `      ${m.de}  →  ${m.vers}`)]);
+  sec("doublon", "DOUBLONS (déjà présents, rien ne sera copié)", (x) => [`• ${x.nom}`, `    déjà : ${x.vers} — ${x.raison}`]);
+  sec("a_trier", "À TRIER (vous devrez choisir)", (x) => [`• ${x.nom} — ${x.raison}`]);
+  sec("attendre", "EN ATTENTE", (x) => [`• ${x.nom} — ${x.raison}`]);
+  sec("ignorer", "IGNORÉS", (x) => [`• ${x.nom} — ${x.raison}`]);
+  return L.join("\n");
+}
+async function vSim(v) {
+  const r = await api("/api/report"); S.report = r;
+  const T = r.totaux, c = T.compte || {}; const mode = r.essai ? "simulation" : r.auto_range ? "auto" : "manuel";
+  const none = !r.dernier_scan;
+  const stat = (n, l) => `<div class="stat"><b>${n}</b><span>${l}</span></div>`;
+  const lst = (k, titre, f, open) => { const l = r.lignes.filter((x) => x.decision === k); if (!l.length) return "";
+    return `<details class="card" ${open ? "open" : ""}><summary><b>${titre}</b> <span class="muted">(${l.length})</span></summary>${l.slice(0, 80).map(f).join("")}${l.length > 80 ? `<p class="muted">… et ${l.length - 80} autres : voir le rapport texte.</p>` : ""}</details>`; };
+  const row = (x, extra) => `<div style="margin:8px 0"><div class="mono" style="font-size:12px;color:var(--muted)">${esc(x.nom)}</div>${x.titre ? `<b>${esc(x.titre)}</b> ` : ""}${extra}</div>`;
+  v.innerHTML = `<h2>Simulation ${helpBtn("simulation")}</h2>
+    <p class="lead">Tout ce que l'appli ferait si vous la laissiez travailler. <b>Rien n'est écrit</b> tant que vous ne changez pas de mode.</p>
+    ${none ? `<div class="empty"><b>Pas encore d'analyse</b>Cliquez sur « ${t("scan")} » en haut à droite.</div>` : `
+    <div class="grid">${stat(c.ranger || 0, "à ranger")}${stat(T.fichiers, "fichiers à transférer")}${stat(GO(T.octets), "volume concerné")}${stat(T.nouveaux_dossiers, "nouveaux dossiers")}
+      ${stat(T.renommes, "fichiers renommés")}${stat(c.doublon || 0, "doublons (ignorés)")}${stat(c.a_trier || 0, "à trier")}</div>
+    <p class="muted" style="margin-top:8px">Méthode de copie : <b>${esc(r.methode)}</b>. Avec reflink ou lien physique, le volume concerné n'occupe pas de place en plus.</p>
+    <div class="chips" style="margin:10px 0"><button class="btn small" id="simDl">Télécharger le rapport (.txt)</button><button class="btn small" id="simCopy">Copier</button></div>
+    ${lst("ranger", "À ranger", (x) => row(x, `<span class="tag ${x.raison === "nouveau dossier" ? "ok" : "info"}">${esc(x.raison)}</span><div class="path mono" style="font-size:12px">→ ${esc(x.vers)}</div><div class="muted" style="font-size:12px">${x.fichiers} fichier(s) · ${GO(x.octets)}</div>${x.changements.length ? `<details class="ren"><summary>${x.changements.length} renommage(s)</summary>${x.changements.slice(0, 10).map((m) => `<div class="mono">${esc(m.de)} → ${esc(m.vers)}</div>`).join("")}</details>` : ""}`), true)}
+    ${lst("doublon", "Doublons : déjà dans la bibliothèque, rien ne sera copié", (x) => row(x, `<span class="tag dup">Doublon</span><div class="path mono" style="font-size:12px">déjà : ${esc(x.vers)}</div>`), false)}
+    ${lst("a_trier", "À trier : l'appli hésite, vous choisirez", (x) => row(x, `<span class="tag warn">${esc(x.raison)}</span>`), false)}
+    ${lst("attendre", "En attente (transfert pas fini)", (x) => row(x, `<span class="tag warn">${esc(x.raison)}</span>`), false)}`}
+    <h3 style="margin-top:18px">Mode de fonctionnement</h3>
+    <div class="card" id="modeBox">
+      ${[["simulation", "Simulation seulement", "L'appli analyse et propose, rien n'est copié. (par défaut)"],
+         ["manuel", "Manuel", "Vous cliquez sur « Ranger » quand la simulation vous convient."],
+         ["auto", "Automatique", `L'appli analyse toutes les <input id="modeMin" type="number" min="1" max="1440" value="${r.intervalle_min || 15}" style="width:70px;min-height:0;padding:2px 6px"> min et range seule ce qui est sûr. Doublons et doutes ne sont jamais rangés seuls.`]]
+        .map(([k, n, d]) => `<label style="display:flex;gap:10px;align-items:flex-start;margin:8px 0"><input type="radio" name="mode" value="${k}" ${k === mode ? "checked" : ""} style="width:auto;min-height:0;margin-top:4px"><span><b>${n}</b>${k === mode ? ' <span class="tag ok">actuel</span>' : ""}<br><span class="muted">${d}</span></span></label>`).join("")}
+      <p class="muted" style="font-size:13px">Passer en manuel ou automatique demande une analyse déjà faite. Chaque rangement reste annulable depuis l'Historique.</p>
+      <button class="btn primary" id="modeOk">Appliquer</button>
+    </div>`;
+  const dl = $("#simDl"); if (dl) {
+    dl.onclick = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([rapportTexte(r)], { type: "text/plain;charset=utf-8" })); a.download = "simulation-kesal-rangeur.txt"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); };
+    $("#simCopy").onclick = async () => { try { await navigator.clipboard.writeText(rapportTexte(r)); toast("Rapport copié"); } catch (e) { toast("Copie impossible ici : utilisez « Télécharger »"); } };
+  }
+  $("#modeOk").onclick = async () => {
+    const m = v.querySelector('input[name="mode"]:checked').value; if (m === mode && m !== "auto") return;
+    if (m !== "simulation" && !confirm(m === "auto"
+      ? "Passer en mode AUTOMATIQUE ?\n\nL'appli analysera seule et rangera réellement ce qui est sûr dans votre bibliothèque (annulable depuis l'Historique)."
+      : "Passer en mode MANUEL ?\n\nLe bouton « Ranger » copiera réellement dans votre bibliothèque (annulable depuis l'Historique).")) return;
+    try { await api("/api/mode", { method: "POST", body: { mode: m, confirm: true, interval_min: +($("#modeMin") || {}).value || undefined } }); toast("Mode enregistré"); invalidate(); await refreshStatus(); render(); }
+    catch (e) { toast(e.message); }
+  };
 }
 
 // ---------- En attente (plan) ----------
@@ -467,7 +524,7 @@ async function openHelp(anchor) {
 }
 function scrollHelp(id) { const el = $("#helpBody").querySelector("#" + CSS.escape(id)); if (el) $("#helpBody").scrollTo({ top: el.offsetTop - 8 }); }
 
-Object.assign(VIEWS, { accueil: vHome, plan: vPlan, trier: vSort, historique: vHistory, bibliotheque: vLibrary, reglages: vSettings, journal: vLog, apropos: vAbout });
+Object.assign(VIEWS, { accueil: vHome, simulation: vSim, plan: vPlan, trier: vSort, historique: vHistory, bibliotheque: vLibrary, reglages: vSettings, journal: vLog, apropos: vAbout });
 
 // ---------- démarrage ----------
 document.addEventListener("click", (e) => {

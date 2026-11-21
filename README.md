@@ -8,6 +8,7 @@ Pourquoi ? Sonarr et Radarr s'appuient sur TheTVDB, qui donne souvent des titres
 
 ## Ce que ça fait
 
+- **Simulation complète** : un onglet montre tout ce qui se passerait (fichiers à transférer, volume, nouveaux dossiers, renommages, doublons, à trier), rapport téléchargeable. Ensuite seulement, choix du mode : simulation / manuel / automatique.
 - Surveille un ou plusieurs **dossiers d'arrivée** (Resilio Sync, client torrent…).
 - **Attend la fin du transfert** : aucun fichier temporaire (`.!sync`, `.part`…) et rien de modifié depuis 30 min (réglable). Vérifié une seconde fois juste avant de copier.
 - **Reconnaît** film ou série, saison, pack complet, qualité, langue (MULTi, VFF, VOSTFR…) à partir du nom de la release.

@@ -3,7 +3,7 @@ const I18N = {
   fr: {
     app: "kesal-rangeur",
     scan: "Analyser maintenant", scanning: "Analyse en cours…",
-    tab_home: "Accueil", tab_plan: "En attente", tab_sort: "À trier", tab_history: "Historique",
+    tab_home: "Accueil", tab_sim: "Simulation", tab_plan: "En attente", tab_sort: "À trier", tab_history: "Historique",
     tab_library: "Bibliothèque", tab_settings: "Réglages", tab_log: "Journal", tab_about: "À propos",
     pill_dry: "Essai à blanc", pill_busy: "Analyse…",
     dry_banner: "Mode essai à blanc : l'appli analyse et propose, mais ne copie, ne déplace et ne supprime rien. Rien n'est écrit dans votre bibliothèque.",
