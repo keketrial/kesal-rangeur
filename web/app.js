@@ -315,12 +315,19 @@ async function vHistory(v) {
 }
 
 // ---------- Bibliothèque ----------
-async function vLibrary(v) {
-  let lib; try { lib = await api("/api/library"); } catch (e) { lib = { pret: false }; }
+async function vLibrary(v, cached) {
+  let lib; if (cached && S.lib) lib = S.lib; else { try { lib = await api("/api/library"); } catch (e) { lib = { pret: false }; } S.lib = lib; }
   if (!lib.pret) { v.innerHTML = `<h2>Bibliothèque</h2><div class="empty"><b>Pas encore lue</b>La bibliothèque est lue pendant l'analyse. Lancez-en une.</div>`; return; }
   const q = (S.libq || "").toLowerCase();
   let html = `<h2>Bibliothèque ${helpBtn("bibliotheque")}</h2><p class="lead">Ce que l'appli a compris de vos dossiers existants (${lib.films} films connus pour les doublons).</p>
     <label class="field"><input id="libq" placeholder="Filtrer par titre…" value="${esc(S.libq || "")}"></label>`;
+  const films = (lib.liste_films || []).filter((f) => !q || (f.nom + f.titre).toLowerCase().includes(q));
+  const MAXF = 300;
+  html += `<h3>Films <span class="muted">(${q ? films.length + " sur " + lib.films : lib.films})</span></h3>` + (lib.films === 0
+    ? `<p class="muted">Aucun film trouvé (dossiers de films non montés sur cette machine ?).</p>`
+    : `<div class="card" style="padding:0;overflow:auto"><table><thead><tr><th>Fichier ou dossier</th><th>Titre lu</th><th>Année</th><th>Dans</th></tr></thead><tbody>
+      ${films.slice(0, MAXF).map((f) => `<tr><td class="mono">${esc(f.nom)}</td><td>${esc(f.titre)}</td><td>${f.annee || `<span class="muted">?</span>`}</td><td class="muted">${esc(f.dossier)}</td></tr>`).join("")}</tbody></table></div>
+      ${films.length > MAXF ? `<p class="muted">… ${films.length - MAXF} autres. Tapez dans « Filtrer par titre » pour les trouver.</p>` : ""}`);
   for (const [cat, rows] of Object.entries(lib.categories)) {
     const f = rows.filter((r) => !q || (r.nom + r.titre).toLowerCase().includes(q));
     if (!rows.length) { html += `<h3>${esc(cat)} <span class="muted">— vide ou non montée sur cette machine</span></h3>`; continue; }
@@ -333,7 +340,7 @@ async function vLibrary(v) {
   v.innerHTML = html;
   const box = $("#libq");
   if (S.libFocus) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
-  box.addEventListener("input", (e) => { S.libq = e.target.value; S.libFocus = true; clearTimeout(S.lt); S.lt = setTimeout(() => vLibrary(v), 200); });
+  box.addEventListener("input", (e) => { S.libq = e.target.value; S.libFocus = true; clearTimeout(S.lt); S.lt = setTimeout(() => vLibrary(v, true), 150); });
   box.addEventListener("blur", () => { S.libFocus = false; });
 }
 

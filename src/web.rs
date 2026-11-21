@@ -289,7 +289,9 @@ async fn api_report(State(st): State<S>) -> R<Value> {
     for it in &items {
         let titre = it.reconnu.as_ref().map(|r| match r.annee { Some(a) => format!("{} ({a})", r.titre), None => r.titre.clone() });
         let (kind, vers, raison, nb, taille, changes) = match &it.decision {
-            Decision::Ranger { vers, nouveau_dossier, renommages, fichiers: places, .. } => {
+            Decision::Ranger { vers, renommages, fichiers: places, .. } => {
+                // « nouveau » = le dossier de destination n'existe pas encore sur le disque (vérifié, pas déduit).
+                let nouveau_dossier = &!vers.exists();
                 let lf = crate::plan::list_files(&it.source);
                 let nb = lf.len() as u64;
                 let taille: u64 = lf.iter().map(|(_, n)| *n).sum();
@@ -631,7 +633,16 @@ async fn api_library(State(st): State<S>) -> R<Value> {
             .collect();
         cats.insert(cat.label().to_string(), rows);
     }
-    Ok(Json(json!({"pret": true, "categories": cats, "films": p.movie_count()})))
+    let liste_films: Vec<Value> = p
+        .movie_list()
+        .into_iter()
+        .map(|(titre, annee, chemin)| {
+            let nom = chemin.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let dossier = chemin.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            json!({"titre": titre, "annee": annee, "nom": nom, "dossier": dossier})
+        })
+        .collect();
+    Ok(Json(json!({"pret": true, "categories": cats, "films": p.movie_count(), "liste_films": liste_films})))
 }
 
 async fn api_log(State(st): State<S>) -> R<Value> {

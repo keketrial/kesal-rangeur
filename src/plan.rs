@@ -296,6 +296,12 @@ impl Planner {
         Planner { choices_path: self.choices_path.clone(), choices: Mutex::new(self.choices.lock().unwrap().clone()), series: self.series.clone(), movies, cfg, tmdb }
     }
 
+    /// Films déjà présents (titre lu, année, chemin), pour l'onglet Bibliothèque.
+    pub fn movie_list(&self) -> Vec<(String, Option<u16>, PathBuf)> {
+        let mut v: Vec<_> = self.movies.entries.iter().map(|(t, y, _, p)| (t.clone(), *y, p.clone())).collect();
+        v.sort_by(|a, b| norm::key(&a.0).cmp(&norm::key(&b.0)).then(a.1.cmp(&b.1)));
+        v
+    }
     pub fn movie_count(&self) -> usize {
         self.movies.entries.len()
     }
