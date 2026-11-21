@@ -324,7 +324,7 @@ async function vLibrary(v) {
   for (const [cat, rows] of Object.entries(lib.categories)) {
     const f = rows.filter((r) => !q || (r.nom + r.titre).toLowerCase().includes(q));
     if (!rows.length) { html += `<h3>${esc(cat)} <span class="muted">— vide ou non montée sur cette machine</span></h3>`; continue; }
-    const sus = f.filter((r) => r.suspect).length;
+    const sus = f.filter((r) => r.suspect && !r.integrale).length;
     html += `<h3>${esc(cat)} <span class="muted">(${f.length})</span> ${sus ? `<span class="tag warn">${sus} sans saison détectée</span>` : ""}</h3>
       <div class="card" style="padding:0;overflow:auto"><table><thead><tr><th>Dossier</th><th>Titre lu</th><th>Saisons</th><th>Vidéos</th></tr></thead><tbody>
       ${f.map((r) => `<tr><td class="mono">${esc(r.nom)}</td><td>${esc(r.titre)}${r.annee ? ` <span class="muted">(${r.annee})</span>` : ""}</td>
