@@ -96,3 +96,9 @@ GPL v3 — ver [LICENSE](LICENSE). Esta app debe seguir siendo **gratuita** (la 
 
 > This product uses the TMDB API but is not endorsed or certified by TMDB.
 > Este producto utiliza la API de TMDB pero no está respaldado ni certificado por TMDB.
+
+---
+
+<img src="web/tmdb-logo.svg" alt="TMDB" width="200">
+
+This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.

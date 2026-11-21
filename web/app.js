@@ -424,8 +424,8 @@ async function vLog(v) {
 }
 function vAbout(v) {
   v.innerHTML = `<h2>À propos</h2><div class="card"><b>kesal-rangeur</b> ${S.status ? "v" + esc(S.status.version) : ""}<p>Range automatiquement ce que vous téléchargez (films, séries, dessins animés, émissions, documentaires, spectacles) au bon endroit de votre bibliothèque, avec les titres de TMDB dans votre langue. Logiciel libre.</p></div>
-  <div class="card"><b>TMDB</b><p>Ce produit utilise l'API TMDB mais n'est ni approuvé ni certifié par TMDB.<br><i>This product uses the TMDB API but is not endorsed or certified by TMDB.</i></p>
-  <p class="muted">Les titres, résumés et affiches viennent de <a href="https://www.themoviedb.org" target="_blank" rel="noopener">themoviedb.org</a>. L'API est gratuite pour un usage non commercial : cette appli doit rester gratuite.</p></div>`;
+  <div class="card"><a href="https://www.themoviedb.org" target="_blank" rel="noopener"><img class="tmdb-about" src="/tmdb-logo.svg" alt="TMDB"></a><p>This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.<br><i>Cette application utilise TMDB et les API TMDB, mais n'est ni approuvée, ni certifiée, ni validée par TMDB.</i></p>
+  <p class="muted">Les titres, résumés et affiches viennent de <a href="https://www.themoviedb.org" target="_blank" rel="noopener">themoviedb.org</a>. L'API TMDB est gratuite pour un usage non commercial : cette appli doit rester gratuite et ne pas servir à faire de l'argent.</p></div>`;
 }
 
 // ---------- explorateur de dossiers ----------

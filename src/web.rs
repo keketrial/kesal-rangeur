@@ -109,6 +109,7 @@ pub async fn serve(cfg_path: PathBuf, bind: String) -> anyhow::Result<()> {
         .route("/", get(|| async { Html(include_str!("../web/index.html")) }))
         .route("/app.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], include_str!("../web/app.js")) }))
         .route("/i18n.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], include_str!("../web/i18n.js")) }))
+        .route("/tmdb-logo.svg", get(|| async { ([(header::CONTENT_TYPE, "image/svg+xml"), (header::CACHE_CONTROL, "public, max-age=86400")], include_str!("../web/tmdb-logo.svg")) }))
         .route("/style.css", get(|| async { ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], include_str!("../web/style.css")) }))
         .route("/api/status", get(api_status))
         .route("/api/scan", post(api_scan))
