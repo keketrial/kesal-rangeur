@@ -8,6 +8,7 @@ Pourquoi ? Sonarr et Radarr s'appuient sur TheTVDB, qui donne souvent des titres
 
 ## Ce que ça fait
 
+- **Trois modes (sélecteur en haut)** : 🛡️ Simulation (rien n'est écrit, avec « Essayer sur cet élément » pour copier un seul élément, annulable) · ✋ Manuel (vous validez chaque élément et pouvez changer son dossier de destination) · ⚡ Auto (surveille le dossier d'arrivée et range seul ce qui est sûr). Par dossier d'arrivée : **Copier** (ex. dossier Téléchargements) ou **Déplacer** (ex. seedbox).
 - **Simulation complète** : un onglet montre tout ce qui se passerait (fichiers à transférer, volume, nouveaux dossiers, renommages, doublons, à trier), rapport téléchargeable. Ensuite seulement, choix du mode : simulation / manuel / automatique.
 - Surveille un ou plusieurs **dossiers d'arrivée** (Resilio Sync, client torrent…).
 - **Attend la fin du transfert** : aucun fichier temporaire (`.!sync`, `.part`…) et rien de modifié depuis 30 min (réglable). Vérifié une seconde fois juste avant de copier.

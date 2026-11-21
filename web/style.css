@@ -143,3 +143,16 @@ input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
 .chk input{width:auto;min-height:0}
 .transfers{border-left:4px solid var(--warn)}
 .tr-row{padding:6px 0;border-top:1px solid var(--line)}
+.modesw{display:inline-flex;border:1px solid var(--line);border-radius:99px;overflow:hidden;background:var(--card)}
+.modesw button{font:inherit;font-size:13px;border:0;background:transparent;color:var(--muted,#6b7280);padding:5px 12px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.modesw button+button{border-left:1px solid var(--line)}
+.modesw button:hover{background:var(--bg)}
+.modesw .dot-s{width:8px;height:8px;border-radius:50%;background:var(--line)}
+.modesw button.on{color:var(--ink);font-weight:600}
+.modesw .m-simulation.on{background:var(--infobg)} .modesw .m-simulation.on .dot-s{background:var(--info)}
+.modesw .m-manuel.on{background:var(--warnbg)} .modesw .m-manuel.on .dot-s{background:var(--warn)}
+.modesw .m-auto.on{background:#dcfce7;color:#14532d} .modesw .m-auto.on .dot-s{background:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.25)}
+@media (prefers-color-scheme:dark){.modesw .m-auto.on{background:#14532d;color:#dcfce7}}
+@media (max-width:640px){.modesw button{padding:5px 8px;font-size:12px}}
+.dest-pick{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted,#6b7280)}
+.dest-pick select{font:inherit;min-height:0;padding:3px 6px}

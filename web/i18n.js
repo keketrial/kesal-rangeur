@@ -6,7 +6,7 @@ const I18N = {
     tab_home: "Accueil", tab_sim: "Simulation", tab_plan: "Détail", tab_sort: "À trier", tab_history: "Historique",
     tab_library: "Bibliothèque", tab_settings: "Réglages", tab_log: "Journal", tab_about: "À propos",
     pill_dry: "Essai à blanc", pill_busy: "Analyse…",
-    dry_banner: "Mode essai à blanc : l'appli analyse et propose, mais ne copie, ne déplace et ne supprime rien. Rien n'est écrit dans votre bibliothèque.",
+    dry_banner: "Simulation : l'appli analyse et propose, mais ne copie, ne déplace et ne supprime rien. Pour ranger vraiment, choisissez Manuel (vous validez chaque élément) ou Auto, en haut.",
     cat_film: "Film", cat_serie: "Série", cat_dessin_anime: "Dessin animé", cat_telerealite: "Télé / téléréalité",
     cat_documentaire: "Documentaire", cat_spectacle: "Spectacle",
     d_ranger: "À ranger", d_doublon: "Doublons", d_a_trier: "À trier", d_attendre: "Transfert en cours", d_ignorer: "Ignorés",

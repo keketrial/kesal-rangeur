@@ -187,6 +187,8 @@ async fn api_status(State(st): State<S>) -> R<Value> {
     Ok(Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
         "essai": cfg.essai,
+        "auto_range": cfg.auto_range,
+        "intervalle_min": cfg.scan_interval_min,
         "en_cours": st.busy.lock().unwrap().len(),
         "scanning": scanning,
         "dernier_scan": dernier,
@@ -255,7 +257,7 @@ async fn run_scan(st: S) {
                 (c.essai, c.auto_range)
             };
             if auto && !essai {
-                run_ready(st.clone(), None).await;
+                run_ready(st.clone(), None, false).await;
             }
         }
         Err(e) => {
@@ -682,19 +684,22 @@ async fn scheduler(st: S) {
 #[derive(Deserialize)]
 struct RunReq {
     nom: Option<String>,
+    /// Essai sur UN seul élément, permis même en simulation : copie forcée (l'original reste), annulable.
+    test: Option<bool>,
 }
 
 async fn api_run(State(st): State<S>, Json(req): Json<RunReq>) -> R<Value> {
-    if st.cfg.read().await.essai {
-        return Err((StatusCode::FORBIDDEN, "Mode essai à blanc actif : rien n'est écrit. Désactivez-le dans les Réglages quand vous êtes prêt.".into()));
+    let test = req.test == Some(true);
+    if st.cfg.read().await.essai && !(test && req.nom.is_some()) {
+        return Err((StatusCode::FORBIDDEN, "Mode simulation actif : rien n'est écrit. Passez en mode Manuel ou Auto (en haut) quand vous êtes prêt, ou utilisez « Essayer sur cet élément ».".into()));
     }
     let st2 = st.clone();
-    tokio::spawn(async move { run_ready(st2, req.nom).await });
+    tokio::spawn(async move { run_ready(st2, req.nom, test).await });
     Ok(Json(json!({"demarre": true})))
 }
 
 /// Range les éléments « À ranger » (un seul si `only` est donné). Une copie à la fois.
-async fn run_ready(st: S, only: Option<String>) {
+async fn run_ready(st: S, only: Option<String>, test: bool) {
     let todo: Vec<Item> = st
         .items
         .read()
@@ -716,19 +721,24 @@ async fn run_ready(st: S, only: Option<String>) {
             }
         }
         let _permit = st.gate.acquire().await;
-        run_one(&st, &it).await;
+        run_one(&st, &it, test).await;
         st.busy.lock().unwrap().remove(&it.nom);
     }
 }
 
-async fn run_one(st: &S, it: &Item) {
+async fn run_one(st: &S, it: &Item, test: bool) {
     let cfg = st.cfg.read().await.clone();
-    if cfg.essai {
-        return; // double sécurité
+    if cfg.essai && !test {
+        return; // double sécurité : en simulation, seul l'essai sur un élément est permis
     }
     let Decision::Ranger { vers, renommages, fichiers: placements, .. } = &it.decision else { return };
     let plan: Vec<(PathBuf, PathBuf)> = placements.iter().map(|p| (p.src.clone(), p.dst.clone())).collect();
-    let Some(input) = cfg.inputs.iter().find(|i| i.path == it.entree).cloned() else { return };
+    let Some(mut input) = cfg.inputs.iter().find(|i| i.path == it.entree).cloned() else { return };
+    if test {
+        // Essai : toujours une COPIE (l'original reste en place), quoi qu'indique le réglage du dossier d'arrivée.
+        input.action = "copy".into();
+        st.log("info", format!("Essai sur un seul élément : « {} » (copie, annulable depuis l'Historique)", it.nom));
+    }
     let (titre, cat) = it.reconnu.as_ref().map(|r| (r.titre.clone(), Some(r.categorie))).unwrap_or((it.nom.clone(), None));
     // Délais entre les essais (secondes). KESAL_RETRY_DELAYS="0,1,1" sert aux tests.
     let delays: Vec<u64> = std::env::var("KESAL_RETRY_DELAYS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).filter(|v: &Vec<u64>| !v.is_empty()).unwrap_or_else(|| vec![0, 20, 120]);

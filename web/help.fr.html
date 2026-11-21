@@ -9,13 +9,13 @@
 <div class="note">Au moindre doute, l'appli ne range pas : l'élément va dans <b>À trier</b>.</div>
 
 <h3 id="simulation">Simulation et modes</h3><span id="essai"></span><span id="auto"></span><span id="fonctionnement"></span>
-<p>L'onglet <b>Simulation</b> montre tout ce qui se passerait : fichiers à transférer, volume, nouveaux dossiers, renommages, doublons, éléments à trier. Rapport téléchargeable.</p>
+<p>Le sélecteur en haut choisit le mode :</p>
 <ul>
-  <li><b>Simulation seulement</b> (défaut) : rien n'est écrit.</li>
-  <li><b>Manuel</b> : vous cliquez sur « Ranger ».</li>
-  <li><b>Automatique</b> : analyse toutes les N minutes et range seul ce qui est sûr. Doublons et doutes ne sont jamais rangés seuls.</li>
+  <li>🛡️ <b>Simulation</b> (défaut) : rien n'est écrit. L'onglet <b>Simulation</b> montre tout ce qui serait fait (fichiers, volume, dossiers, renommages, doublons). Sur chaque élément, <b>Essayer sur cet élément</b> en copie un seul, annulable, pour voir le résultat sans toucher au reste.</li>
+  <li>✋ <b>Manuel</b> : vous validez chaque élément (<b>Valider et ranger</b>) et pouvez changer son dossier de destination avant.</li>
+  <li>⚡ <b>Auto</b> : l'appli surveille le dossier d'arrivée toutes les N minutes et range seule ce qui est sûr. Doublons et doutes ne sont jamais rangés seuls.</li>
 </ul>
-<p>Chaque rangement est annulable (Historique).</p>
+<p>Chaque rangement est annulable (Historique). Passer en Manuel ou Auto demande une analyse déjà faite et une confirmation.</p>
 
 <h3 id="tmdb">Clé TMDB</h3><span id="langue"></span>
 <ol>
@@ -29,7 +29,7 @@
 <ul>
   <li><b>Arrivée</b> : là où tombent vos téléchargements (avec Docker, le chemin vu <i>du conteneur</i>).</li>
   <li><b>Destinations</b> : un dossier par catégorie. Une série existante reçoit la nouvelle saison ; sinon un dossier « Titre (année) » est créé.</li>
-  <li><b>Copier</b> (conseillé) : l'original reste. <b>Déplacer</b> : après vérification de la copie.</li>
+  <li><b>Copier</b> : l'original reste (ex. votre dossier Téléchargements surveillé : les nouveaux films et séries sont copiés au bon endroit). <b>Déplacer</b> : l'original disparaît après vérification de la copie (ex. dossier d'arrivée d'une seedbox).</li>
   <li><b>Attendre avant de ranger</b> : un élément n'est rangé que si aucun fichier temporaire (<code>.!sync</code>…) n'est présent <i>et</i> si rien de nouveau n'est arrivé depuis N minutes (utile pour une saison dont les épisodes arrivent un par un).</li>
   <li><b>Règles</b> : forcent une catégorie (« Pékin Express → télé »).</li>
   <li><b>Doublons</b> : ce qui est déjà dans la bibliothèque n'est jamais recopié.</li>
