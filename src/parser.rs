@@ -20,6 +20,9 @@ pub struct Release {
     pub source: Option<String>,
     pub codec: Option<String>,
     pub hdr: bool,
+    /// Codec audio lu dans le nom (EAC3, AC3, DTS, TrueHD, AAC…).
+    #[serde(default)]
+    pub audio: Option<String>,
     pub langs: Vec<String>,
     pub group: Option<String>,
     /// Le nom contient « DOC » / « DOCU » : indice pour classer en documentaire.
@@ -104,6 +107,21 @@ enum Tok {
     Service, // plateforme de streaming (NF, AMZN…)
     Junk, // audio, drapeaux (REPACK, 10bit…) : fait partie de la partie technique
     Word,
+}
+
+/// Codec audio reconnu dans un mot du nom de release.
+fn audio_label(t: &str) -> Option<String> {
+    let l = t.to_lowercase();
+    let v = if l == "atmos" { "Atmos" }
+        else if l == "truehd" { "TrueHD" }
+        else if l == "dtshd" { "DTS-HD" }
+        else if l == "dts" { "DTS" }
+        else if l == "eac3" || l.starts_with("ddp") { "EAC3" }
+        else if l == "ac3" || l == "dd" || l.starts_with("dd5") || l.starts_with("dd2") { "AC3" }
+        else if l.starts_with("aac") { "AAC" }
+        else if l == "flac" { "FLAC" }
+        else { return None };
+    Some(v.to_string())
 }
 
 fn classify(t: &str) -> Tok {
@@ -347,6 +365,11 @@ pub fn parse(name: &str) -> Release {
             }
             Tok::Hdr => r.hdr = true,
             Tok::Doc => r.doc_hint = true,
+            Tok::Junk => {
+                if r.audio.is_none() {
+                    r.audio = audio_label(&toks[i]);
+                }
+            }
             _ => {}
         }
         i += 1;
@@ -383,6 +406,13 @@ pub fn parse(name: &str) -> Release {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_lu_dans_le_nom() {
+        assert_eq!(parse("Film.2020.FRENCH.1080p.WEB.DDP5.1.H265-GRP.mkv").audio.as_deref(), Some("EAC3"));
+        assert_eq!(parse("Film.2020.MULTi.1080p.BluRay.DTS.x264-GRP.mkv").audio.as_deref(), Some("DTS"));
+        assert_eq!(parse("Film.2020.1080p.WEB.H264-GRP.mkv").audio, None);
+    }
 
     #[test]
     fn film_simple() {

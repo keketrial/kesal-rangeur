@@ -25,7 +25,7 @@ Pourquoi ? Sonarr et Radarr s'appuient sur TheTVDB, qui donne souvent des titres
 
 ## Sécurité : le mode « essai à blanc »
 
-Au premier lancement, l'appli est en **essai à blanc** : elle analyse et propose, mais **n'écrit rien**. Vous vérifiez le résultat (onglet *En attente*), puis vous désactivez l'essai dans les Réglages quand vous êtes prêt. Chaque rangement réel reste annulable.
+Au premier lancement, l'appli est en **essai à blanc** : elle analyse et propose, mais **n'écrit rien**. Vous vérifiez le résultat (onglets *Simulation* et *Détail*), puis vous désactivez l'essai dans les Réglages quand vous êtes prêt. Chaque rangement réel reste annulable.
 
 ## Installation
 

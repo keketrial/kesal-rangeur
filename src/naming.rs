@@ -90,9 +90,15 @@ pub struct Ctx {
     pub source: Option<String>,
     pub vc: Option<String>,
     pub group: Option<String>,
+    /// Codec audio (EAC3, DTS…).
+    pub audio: Option<String>,
+    /// « HDR » si le nom l'indique.
+    pub hdr: Option<String>,
+    /// Langues lues dans le nom (FR, EN…), séparées par un espace.
+    pub lang: Option<String>,
 }
 
-const KNOWN: &[&str] = &["n", "y", "ny", "s", "s00", "e", "e00", "s00e00", "sxe", "t", "vf", "source", "vc", "group"];
+const KNOWN: &[&str] = &["n", "y", "ny", "s", "s00", "e", "e00", "s00e00", "sxe", "t", "vf", "source", "vc", "group", "audio", "hdr", "lang"];
 
 /// Rend une valeur utilisable dans un nom de fichier.
 fn clean_value(v: &str) -> String {
@@ -130,6 +136,9 @@ fn value(tok: &str, c: &Ctx) -> String {
         "source" => c.source.clone().unwrap_or_default(),
         "vc" => c.vc.clone().unwrap_or_default(),
         "group" => c.group.clone().unwrap_or_default(),
+        "audio" => c.audio.clone().unwrap_or_default(),
+        "hdr" => c.hdr.clone().unwrap_or_default(),
+        "lang" => c.lang.clone().unwrap_or_default(),
         _ => String::new(),
     }
 }
@@ -297,6 +306,9 @@ pub fn map_series(files: &[PathBuf], i: &SeriesIn) -> Result<(Vec<(PathBuf, Path
             source: pr.source.clone().or_else(|| i.release.source.clone()),
             vc: pr.codec.clone().or_else(|| i.release.codec.clone()),
             group: pr.group.clone().or_else(|| i.release.group.clone()),
+            audio: pr.audio.clone().or_else(|| i.release.audio.clone()),
+            hdr: if pr.hdr || i.release.hdr { Some("HDR".into()) } else { None },
+            lang: { let l = if pr.langs.is_empty() { &i.release.langs } else { &pr.langs }; if l.is_empty() { None } else { Some(l.join(" ")) } },
         };
         let mut segs: Vec<String> = Vec::new();
         let sf = i.fmt.season_folder.trim();
@@ -368,7 +380,7 @@ pub fn map_movie(files: &[(PathBuf, u64)], fmt: &Formats, title: &str, year: Opt
             parts.insert(m.0.clone(), n.unwrap());
         }
     }
-    let ctx = Ctx { n: title.to_string(), y: year, vf: release.resolution.clone(), source: release.source.clone(), vc: release.codec.clone(), group: release.group.clone(), ..Default::default() };
+    let ctx = Ctx { n: title.to_string(), y: year, vf: release.resolution.clone(), source: release.source.clone(), vc: release.codec.clone(), group: release.group.clone(), audio: release.audio.clone(), hdr: if release.hdr { Some("HDR".into()) } else { None }, lang: if release.langs.is_empty() { None } else { Some(release.langs.join(" ")) }, ..Default::default() };
     let mut segs = render(&fmt.movie, &ctx)?;
     let base = segs.pop().unwrap();
     let mut out = Vec::new();
@@ -409,9 +421,9 @@ pub fn map_movie(files: &[(PathBuf, u64)], fmt: &Formats, title: &str, year: Opt
 
 /// Exemple affiché dans les Réglages.
 pub fn preview(fmt: &Formats) -> Result<(String, String), String> {
-    let movie_ctx = Ctx { n: "Avatar".into(), y: Some(2009), vf: Some("1080p".into()), source: Some("BluRay".into()), vc: Some("x265".into()), group: Some("GRP".into()), ..Default::default() };
+    let movie_ctx = Ctx { n: "Avatar".into(), y: Some(2009), vf: Some("1080p".into()), source: Some("BluRay".into()), vc: Some("x265".into()), group: Some("GRP".into()), audio: Some("EAC3".into()), hdr: Some("HDR".into()), lang: Some("FR".into()), ..Default::default() };
     let m = render(&fmt.movie, &movie_ctx)?.join("/") + ".mkv";
-    let ep_ctx = Ctx { n: "Dark Angel".into(), y: Some(2000), s: Some(3), e: vec![1], t: vec!["Labyrinthe".into()], vf: Some("1080p".into()), source: Some("WEB".into()), vc: Some("x264".into()), group: Some("GRP".into()) };
+    let ep_ctx = Ctx { n: "Dark Angel".into(), y: Some(2000), s: Some(3), e: vec![1], t: vec!["Labyrinthe".into()], vf: Some("1080p".into()), source: Some("WEB".into()), vc: Some("x264".into()), group: Some("GRP".into()), audio: Some("AC3".into()), hdr: None, lang: Some("FR".into()) };
     let mut segs = Vec::new();
     let sf = fmt.season_folder.trim();
     let sf = if sf == "auto" { "Season {s00}" } else { sf };
@@ -427,6 +439,15 @@ pub fn preview(fmt: &Formats) -> Result<(String, String), String> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn variables_techniques_au_choix() {
+        let c = Ctx { n: "Avatar".into(), y: Some(2009), vf: Some("1080p".into()), source: Some("BluRay".into()), vc: Some("H.265".into()), audio: Some("EAC3".into()), hdr: Some("HDR".into()), lang: Some("FR".into()), ..Default::default() };
+        assert_eq!(render("{n} ({y}) - {vf} {source} {vc} {audio} {hdr} {lang} {group}", &c).unwrap(), vec!["Avatar (2009) - 1080p BluRay H.265 EAC3 HDR FR".to_string()]);
+        // rien de coché côté technique : pas de reste
+        let m = Ctx { n: "Avatar".into(), y: Some(2009), ..Default::default() };
+        assert_eq!(render("{n} ({y}) - {vf} {audio} {hdr}", &m).unwrap(), vec!["Avatar (2009)".to_string()]);
+    }
 
     fn ctx_ep() -> Ctx {
         Ctx { n: "Dark Angel".into(), y: Some(2000), s: Some(3), e: vec![1], t: vec!["Labyrinth".into()], ..Default::default() }

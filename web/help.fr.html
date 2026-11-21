@@ -30,7 +30,7 @@
   <li><b>Arrivée</b> : là où tombent vos téléchargements (avec Docker, le chemin vu <i>du conteneur</i>).</li>
   <li><b>Destinations</b> : un dossier par catégorie. Une série existante reçoit la nouvelle saison ; sinon un dossier « Titre (année) » est créé.</li>
   <li><b>Copier</b> (conseillé) : l'original reste. <b>Déplacer</b> : après vérification de la copie.</li>
-  <li><b>Délai de calme</b> : un élément n'est rangé que s'il n'a pas bougé depuis N minutes et sans fichier temporaire.</li>
+  <li><b>Attendre avant de ranger</b> : un élément n'est rangé que si aucun fichier temporaire (<code>.!sync</code>…) n'est présent <i>et</i> si rien de nouveau n'est arrivé depuis N minutes (utile pour une saison dont les épisodes arrivent un par un).</li>
   <li><b>Règles</b> : forcent une catégorie (« Pékin Express → télé »).</li>
   <li><b>Doublons</b> : ce qui est déjà dans la bibliothèque n'est jamais recopié.</li>
 </ul>
@@ -39,11 +39,11 @@
 <p><b>Automatique</b> : reflink (instantané, sans place en plus, Btrfs/XFS), sinon lien physique (même volume), sinon copie normale. Avec Docker, utilisez <b>un seul montage</b> pour tout.</p>
 
 <h3 id="nommage">Noms des fichiers</h3>
-<p>Par défaut, les noms d'origine sont gardés. Les préréglages <b>FileBot</b> et <b>Plex</b> renomment à la manière de FileBot, avec l'aperçu avant → après. Variables : <code>{n}</code> titre · <code>{y}</code> année · <code>{s00e00}</code> S01E01 · <code>{t}</code> titre d'épisode.</p>
+<p>Par défaut, les <b>noms d'origine sont gardés</b> (résolution, codec… restent visibles). Vous pouvez aussi <b>cocher ce que vous voulez dans le nom</b> (année, résolution, source, codec vidéo, audio, HDR, langue, groupe), ou choisir les préréglages <b>FileBot</b> / <b>Plex</b>. Un aperçu avant → après est affiché.</p>
 
 <h3 id="attente">Les onglets</h3><span id="trier"></span><span id="historique"></span><span id="bibliotheque"></span>
 <ul>
-  <li><b>En attente</b> : le détail de chaque élément.</li>
+  <li><b>Détail</b> : chaque élément, ce qui sera fait.</li>
   <li><b>À trier</b> : choisissez la bonne fiche, l'appli s'en souvient.</li>
   <li><b>Historique</b> : annuler un rangement.</li>
   <li><b>Bibliothèque</b> : ce que l'appli a compris de vos dossiers.</li>
@@ -74,6 +74,6 @@
 <h3 id="faq">Dépannage</h3>
 <ul>
   <li><b>Aucune fiche trouvée / mauvais titre</b> : « Corriger la fiche… ».</li>
-  <li><b>Reste « En attente »</b> : transfert en cours, réessayez plus tard.</li>
+  <li><b>Reste « Transfert en cours »</b> : le transfert n'est pas fini ou un fichier est arrivé il y a moins de N minutes ; réessayez plus tard.</li>
   <li><b>Doublon inattendu</b> : la ligne indique le chemin existant.</li>
 </ul>

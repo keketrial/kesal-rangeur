@@ -18,7 +18,30 @@ function toast(msg) {
   clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("show"), 3200);
 }
 const poster = (p, w = 154) => p ? `<img class="poster" loading="lazy" alt="" src="https://image.tmdb.org/t/p/w${w}${esc(p)}">` : `<div class="poster"></div>`;
-const helpBtn = (a) => `<button class="help-btn" type="button" data-help="${a}" aria-label="Aide" title="Aide">?</button>`;
+const TIPS = {
+  tmdb: "Clé gratuite TMDB : donne les titres dans votre langue, les affiches et les genres.",
+  langue: "Langue des titres (fr-FR, es-ES…). TMDB renvoie l'original s'il n'a pas de traduction.",
+  arrivee: "Dossier où arrivent vos téléchargements (Resilio, torrent…). Vous pouvez en ajouter plusieurs.",
+  modes: "Automatique : l'appli devine la catégorie. « Tout va dans… » : tout ce dossier part dans une destination fixe.",
+  action: "Copier : l'original reste (conseillé avec Resilio). Déplacer : l'original disparaît après vérification de la copie.",
+  calme: "Un élément n'est rangé que si aucun fichier temporaire n'est présent et si rien de nouveau n'est arrivé depuis ce nombre de minutes.",
+  destinations: "Un dossier par catégorie. Une série existante reçoit la nouvelle saison ; sinon un dossier est créé.",
+  regles: "Forcer la catégorie d'un titre (ex. « Pékin Express » → télé). Prioritaire sur TMDB.",
+  doublons: "Ce qui est déjà dans la bibliothèque n'est jamais recopié.",
+  nommage: "Par défaut, noms d'origine gardés. Vous pouvez cocher les éléments à garder dans le nom (année, résolution, codec…).",
+  methode: "Reflink (instantané, sans place en plus), sinon lien physique, sinon copie normale.",
+  fonctionnement: "Mode (simulation / manuel / automatique), méthode de copie et analyse automatique.",
+  essai: "Simulation : l'appli analyse et propose, mais ne copie, ne déplace et ne supprime rien.",
+  simulation: "Tout ce qui serait fait : fichiers, volume, dossiers créés, renommages, doublons. Rien n'est écrit.",
+  auto: "Analyse seule toutes les N minutes et range ce qui est sûr. Doublons et doutes ne sont jamais rangés seuls.",
+  services: "Après un rangement, Plex / Jellyfin rafraîchissent seulement le dossier concerné. Facultatif.",
+  attente: "Chaque élément arrivé et ce que l'appli en ferait. Rien n'est exécuté en simulation.",
+  trier: "Quand l'appli hésite, elle ne range pas : vous choisissez la bonne fiche, elle s'en souvient.",
+  historique: "Les rangements effectués. Chacun peut être annulé : seuls les fichiers créés sont retirés.",
+  bibliotheque: "Ce que l'appli a compris de vos dossiers existants. Sert à retrouver le bon dossier et repérer les doublons.",
+  docker: "Un seul montage pour tout, afin que la copie soit instantanée.",
+};
+const helpBtn = (a) => `<button class="help-btn" type="button" data-tip-for="${a}" aria-label="Aide : ${esc(TIPS[a] || a)}">?</button>`;
 const short = (p, n = 70) => { p = String(p); return p.length > n ? "…" + p.slice(-n) : p; };
 
 // ---------- navigation ----------
@@ -94,6 +117,13 @@ async function prewarm() {
 }
 
 // ---------- Accueil ----------
+function transfers() {
+  const l = S.items.filter((i) => decisionOf(i) === "attendre");
+  if (!l.length) return "";
+  return `<div class="card transfers"><b><span class="spin"></span>Transferts en cours (${l.length})</b>
+    <p class="muted" style="margin:4px 0 8px">Ces éléments ne sont pas rangés tant qu'ils ne sont pas complets. L'appli surveille et les rangera ensuite.</p>
+    ${l.map((i) => `<div class="tr-row"><div class="mono" style="font-size:12px">${esc(short(i.nom, 70))}</div><div class="muted" style="font-size:13px">${esc(i.decision.raison)}</div></div>`).join("")}</div>`;
+}
 function vHome(v) {
   const st = S.status || {}; const c = counts();
   const ready = st.tmdb_ok && st.entrees > 0 && st.destinations > 0;
@@ -112,6 +142,7 @@ function vHome(v) {
       ${stat(c.ranger, t("d_ranger"), "ranger")}${stat(c.doublon, t("d_doublon"), "doublon")}${stat(c.a_trier, t("d_a_trier"), "a_trier")}
       ${stat(c.attendre, t("d_attendre"), "attendre")}${stat(c.ignorer, t("d_ignorer"), "ignorer")}${c.fait ? stat(c.fait, "Rangés", "fait") : ""}
     </div>
+    ${transfers()}
     <p class="muted" style="margin-top:14px">${st.dernier_scan ? "Dernière analyse : " + new Date(st.dernier_scan * 1000).toLocaleString() : "Aucune analyse pour l'instant — cliquez sur « " + t("scan") + " »."}
     ${st.films_connus != null ? ` · ${st.films_connus} films connus · ${st.choix_retenus || 0} choix retenu(s)` : ""}</p>
     <h3>Services</h3>
@@ -370,13 +401,18 @@ async function vSettings(v) {
 
   <div class="card"><h3 style="margin-top:0">Noms des fichiers (comme FileBot) ${helpBtn("nommage")}</h3>
     <label class="field"><span>Format</span><select id="n_preset">
-      ${[["keep", "Garder les noms d'origine (par défaut)"], ["filebot", "FileBot : Titre (année) · Série - S01E01 - Titre de l'épisode"], ["plex", "Plex : un dossier par film, dossiers de saison"], ["custom", "Personnalisé…"]].map(([k, n]) => `<option value="${k}" ${s.naming.preset === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+      ${[["keep", "Garder les noms d'origine (par défaut)"], ["filebot", "FileBot : Titre (année) · Série - S01E01 - Titre de l'épisode"], ["plex", "Plex : un dossier par film, dossiers de saison"], ["custom", "Choisir les éléments du nom (cases à cocher)"]].map(([k, n]) => `<option value="${k}" ${s.naming.preset === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
     <div id="n_custom" ${s.naming.preset === "custom" ? "" : "hidden"}>
+      <div class="card" style="background:var(--bg)"><b>Cochez ce que vous voulez dans le nom</b>
+        <div class="checks">${[["y", "Année"], ["vf", "Résolution (1080p)"], ["source", "Source (WEB, BluRay)"], ["vc", "Codec vidéo (H.265)"], ["audio", "Audio (EAC3, DTS)"], ["hdr", "HDR"], ["lang", "Langue"], ["group", "Groupe"], ["t", "Titre de l'épisode"], ["folder", "Un dossier par film"], ["season", "Dossiers de saison"]]
+          .map(([k, n]) => `<label class="chk"><input type="checkbox" data-nb="${k}"> ${n}</label>`).join("")}</div>
+        <p class="muted" style="margin:6px 0 0">Ce qui n'est pas trouvé dans le nom d'origine est simplement omis.</p></div>
+      <details><summary class="muted" style="cursor:pointer;margin:8px 0">Formats avancés</summary>
       <div class="two"><label class="field"><span>Film</span><input id="n_movie" class="mono" value="${esc(s.naming.movie)}"></label>
         <label class="field"><span>Épisode</span><input id="n_episode" class="mono" value="${esc(s.naming.episode)}"></label></div>
       <div class="two"><label class="field"><span>Dossier de saison (« auto » = style déjà présent ; vide = aucun)</span><input id="n_season" class="mono" value="${esc(s.naming.season_folder)}"></label>
         <label class="field"><span>Nouveau dossier de série</span><input id="n_series" class="mono" value="${esc(s.naming.series_folder)}"></label></div>
-      <p class="muted" style="margin-top:0">Variables : <code>{n}</code> titre, <code>{y}</code> année, <code>{ny}</code> titre (année), <code>{s}</code> <code>{s00}</code> saison, <code>{e}</code> <code>{e00}</code> épisode, <code>{s00e00}</code> S01E01, <code>{sxe}</code> 1x01, <code>{t}</code> titre de l'épisode, <code>{vf}</code> 1080p, <code>{source}</code>, <code>{vc}</code>, <code>{group}</code>. Un « / » crée un dossier.</p></div>
+      <p class="muted" style="margin-top:0">Variables : <code>{n}</code> titre, <code>{y}</code> année, <code>{ny}</code> titre (année), <code>{s}</code> <code>{s00}</code> saison, <code>{e}</code> <code>{e00}</code> épisode, <code>{s00e00}</code> S01E01, <code>{sxe}</code> 1x01, <code>{t}</code> titre de l'épisode, <code>{vf}</code> 1080p, <code>{source}</code>, <code>{vc}</code> codec vidéo, <code>{audio}</code>, <code>{hdr}</code>, <code>{lang}</code>, <code>{group}</code>. Un « / » crée un dossier.</p></details></div>
     <div id="n_prev" class="card" style="background:var(--bg);margin:0"></div></div>
 
   <div class="card"><h3 style="margin-top:0">Fonctionnement ${helpBtn("fonctionnement")}</h3>
@@ -399,6 +435,26 @@ async function vSettings(v) {
     <button class="btn" id="b_svctest" type="button">Tester les services</button> <span id="svcres" class="muted"></span></div>
   <div class="save-bar"><span class="muted" id="saveInfo"></span><button class="btn primary" id="saveBtn" type="button">${t("save")}</button></div>`;
   drawInputs(); drawFilmLibs(); drawRules();
+  // cases à cocher ⇄ formats (les formats restent modifiables à la main dans « Formats avancés »)
+  const nbOn = (k) => { const e = document.querySelector(`[data-nb="${k}"]`); return !!(e && e.checked); };
+  const nbInit = () => {
+    const mv = $("#n_movie").value, ep = $("#n_episode").value, all = mv + " " + ep;
+    const set = (k, v) => { const e = document.querySelector(`[data-nb="${k}"]`); if (e) e.checked = v; };
+    ["y", "vf", "source", "vc", "audio", "hdr", "lang", "group"].forEach((k) => set(k, all.includes("{" + k + "}") || (k === "y" && all.includes("{ny}"))));
+    set("t", ep.includes("{t}")); set("folder", mv.includes("/")); set("season", $("#n_season").value.trim() !== "");
+  };
+  const nbBuild = () => {
+    const tech = ["vf", "source", "vc", "audio", "hdr", "lang", "group"].filter(nbOn).map((k) => `{${k}}`).join(" ");
+    const base = nbOn("y") ? "{n} ({y})" : "{n}";
+    const film = base + (tech ? " - " + tech : "");
+    $("#n_movie").value = nbOn("folder") ? `${base}/${film}` : film;
+    $("#n_episode").value = "{n} - {s00e00}" + (nbOn("t") ? " - {t}" : "") + (tech ? " - " + tech : "");
+    $("#n_season").value = nbOn("season") ? "auto" : "";
+    $("#n_series").value = base;
+    ["n_movie", "n_episode", "n_season", "n_series"].forEach((id) => $("#" + id).dispatchEvent(new Event("input")));
+  };
+  nbInit();
+  document.querySelectorAll("[data-nb]").forEach((e) => e.addEventListener("change", nbBuild));
   const namingNow = () => ({ preset: $("#n_preset").value, movie: $("#n_movie").value, episode: $("#n_episode").value, season_folder: $("#n_season").value, series_folder: $("#n_series").value });
   let npT; const nPrev = async () => {
     $("#n_custom").hidden = $("#n_preset").value !== "custom";
@@ -436,7 +492,7 @@ function drawInputs() {
     <label class="field"><span>Dossier</span><div class="inline"><input data-k="path" value="${esc(i.path)}"><button class="btn small" data-b="path" type="button">${t("browse")}</button><button class="btn small danger" data-b="del" type="button">${t("remove")}</button></div></label>
     <div class="three"><label class="field"><span>Mode ${helpBtn("modes")}</span><select data-k="mode"><option value="auto">${t("mode_auto")}</option>${CATS.map((c) => `<option value="${c}" ${i.mode === c ? "selected" : ""}>Tout va dans : ${catName(c)}</option>`).join("")}</select></label>
       <label class="field"><span>Action ${helpBtn("action")}</span><select data-k="action"><option value="copy" ${i.action === "copy" ? "selected" : ""}>${t("act_copy")}</option><option value="move" ${i.action === "move" ? "selected" : ""}>${t("act_move")}</option></select></label>
-      <label class="field"><span>Calme (min) ${helpBtn("calme")}</span><input data-k="settle_minutes" type="number" min="0" value="${i.settle_minutes}"></label></div></div>`).join("") : `<p class="muted">Aucun dossier d'arrivée.</p>`;
+      <label class="field"><span>Attendre avant de ranger (min) ${helpBtn("calme")}</span><input data-k="settle_minutes" type="number" min="0" value="${i.settle_minutes}"></label></div></div>`).join("") : `<p class="muted">Aucun dossier d'arrivée.</p>`;
   $("#inputs").querySelectorAll(".input-block").forEach((blk) => {
     const n = +blk.dataset.n;
     blk.querySelector('[data-b="path"]').onclick = async () => { const el = blk.querySelector('[data-k="path"]'); const p = await pickFolder(el.value, "Dossier d'arrivée"); if (p) el.value = p; };
@@ -534,6 +590,28 @@ function scrollHelp(id) { const el = $("#helpBody").querySelector("#" + CSS.esca
 Object.assign(VIEWS, { accueil: vHome, simulation: vSim, plan: vPlan, trier: vSort, historique: vHistory, bibliotheque: vLibrary, reglages: vSettings, journal: vLog, apropos: vAbout });
 
 // ---------- démarrage ----------
+// Bulle d'aide des « ? » : au survol, au clavier ou au toucher ; aucun changement de page.
+const tipEl = document.createElement("div"); tipEl.id = "tip"; tipEl.setAttribute("role", "tooltip"); tipEl.hidden = true; document.body.appendChild(tipEl);
+let tipPin = null;
+function showTip(btn, pinned) {
+  const a = btn.dataset.tipFor; tipEl.innerHTML = esc(TIPS[a] || "Pas d'aide pour ce réglage.") + `<a href="#" data-help="${esc(a)}" class="tip-more">En savoir plus</a>`;
+  tipEl.hidden = false; const r = btn.getBoundingClientRect(), tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+  let x = Math.min(Math.max(8, r.left + r.width / 2 - tw / 2), window.innerWidth - tw - 8), y = r.bottom + 8;
+  if (y + th > window.innerHeight - 8) y = Math.max(8, r.top - th - 8);
+  tipEl.style.left = x + "px"; tipEl.style.top = y + "px"; tipPin = pinned ? btn : null;
+}
+function hideTip() { tipEl.hidden = true; tipPin = null; }
+document.addEventListener("mouseover", (e) => { const b = e.target.closest && e.target.closest("[data-tip-for]"); if (b && !tipPin) showTip(b, false); else if (!b && !tipPin && !e.target.closest("#tip")) hideTip(); });
+document.addEventListener("focusin", (e) => { const b = e.target.closest && e.target.closest("[data-tip-for]"); if (b) showTip(b, false); });
+document.addEventListener("focusout", () => { if (!tipPin) hideTip(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTip(); });
+document.addEventListener("scroll", () => { if (!tipEl.hidden && !tipPin) hideTip(); }, true);
+document.addEventListener("click", (e) => {
+  const tb = e.target.closest("[data-tip-for]");
+  if (tb) { e.preventDefault(); if (tipPin === tb) hideTip(); else showTip(tb, true); return; }
+  if (tipPin && !e.target.closest("#tip")) hideTip();
+  const more = e.target.closest(".tip-more"); if (more) { hideTip(); }
+});
 document.addEventListener("click", (e) => {
   const h = e.target.closest("[data-help]"); if (h) { e.preventDefault(); openHelp(h.dataset.help); }
   const c = e.target.closest("[data-close]"); if (c) c.closest("dialog").close();
