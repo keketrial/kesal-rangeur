@@ -988,27 +988,27 @@ mod tests {
     #[test]
     fn hotes_autorises() {
         let extra = vec!["range.example.org".to_string()];
-        for h in ["192.168.1.40:3050", "127.0.0.1:3050", "localhost:3050", "[::1]:3050", "rangeur:3050", "nas.local", "mon-nas.lan:3050", "range.example.org", "RANGE.example.org:443"] {
+        for h in ["192.168.1.10:3050", "127.0.0.1:3050", "localhost:3050", "[::1]:3050", "rangeur:3050", "nas.local", "mon-nas.lan:3050", "range.example.org", "RANGE.example.org:443"] {
             assert!(host_allowed(h, &extra), "{h} devrait être autorisé");
         }
-        for h in ["evil.com", "evil.com:3050", "192.168.1.40.evil.com", "attacker.example.net:3050", ""] {
+        for h in ["evil.com", "evil.com:3050", "192.168.1.10.evil.com", "attacker.example.net:3050", ""] {
             assert!(!host_allowed(h, &extra), "{h} devrait être refusé");
         }
     }
 
     #[test]
     fn origine_doit_correspondre() {
-        assert!(origin_ok(None, "192.168.1.40:3050"));
-        assert!(origin_ok(Some("http://192.168.1.40:3050"), "192.168.1.40:3050"));
-        assert!(!origin_ok(Some("http://evil.com"), "192.168.1.40:3050"));
-        assert!(!origin_ok(Some("https://192.168.1.40:3050.evil.com"), "192.168.1.40:3050"));
+        assert!(origin_ok(None, "192.168.1.10:3050"));
+        assert!(origin_ok(Some("http://192.168.1.10:3050"), "192.168.1.10:3050"));
+        assert!(!origin_ok(Some("http://evil.com"), "192.168.1.10:3050"));
+        assert!(!origin_ok(Some("https://192.168.1.10:3050.evil.com"), "192.168.1.10:3050"));
     }
 
     #[test]
     fn mot_de_passe_basic() {
-        // « kev:secret » en base64 = a2V2OnNlY3JldA==
-        assert!(basic_password_ok(Some("Basic a2V2OnNlY3JldA=="), "secret"));
-        assert!(!basic_password_ok(Some("Basic a2V2OnNlY3JldA=="), "autre"));
+        // « user:secret » en base64 = dXNlcjpzZWNyZXQ=
+        assert!(basic_password_ok(Some("Basic dXNlcjpzZWNyZXQ="), "secret"));
+        assert!(!basic_password_ok(Some("Basic dXNlcjpzZWNyZXQ="), "autre"));
         assert!(!basic_password_ok(None, "secret"));
         assert!(!basic_password_ok(Some("Bearer xxx"), "secret"));
         assert!(!basic_password_ok(Some("Basic !!!"), "secret"));

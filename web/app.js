@@ -472,11 +472,11 @@ async function vSettings(v) {
 
   <div class="card"><h3 style="margin-top:0">Plex, Jellyfin, Home Assistant ${helpBtn("services")}</h3>
     <div class="banner info"><span>ℹ️</span><span>Après un rangement réel, Plex et Jellyfin sont prévenus pour rafraîchir leur bibliothèque. « Tester » ne fait que lire, rien n'est modifié chez eux.</span></div>
-    <div class="two"><label class="field"><span>Adresse de Plex</span><input id="s_plexurl" value="${esc(s.plex_url)}" placeholder="http://192.168.1.40:32400"></label>
+    <div class="two"><label class="field"><span>Adresse de Plex</span><input id="s_plexurl" value="${esc(s.plex_url)}" placeholder="http://192.168.1.10:32400"></label>
       <label class="field"><span>Jeton Plex ${secTag(s.secrets.plex)}</span><input id="s_plextok" type="password" autocomplete="off" placeholder="vide = inchangé"></label></div>
-    <div class="two"><label class="field"><span>Adresse de Jellyfin</span><input id="s_jfurl" value="${esc(s.jellyfin_url)}" placeholder="http://192.168.1.40:8096"></label>
+    <div class="two"><label class="field"><span>Adresse de Jellyfin</span><input id="s_jfurl" value="${esc(s.jellyfin_url)}" placeholder="http://192.168.1.10:8096"></label>
       <label class="field"><span>Clé API Jellyfin ${secTag(s.secrets.jellyfin)}</span><input id="s_jftok" type="password" autocomplete="off" placeholder="vide = inchangée"></label></div>
-    <div class="two"><label class="field"><span>Adresse de Home Assistant</span><input id="s_haurl" value="${esc(s.ha_url)}" placeholder="http://192.168.1.41:8123"></label>
+    <div class="two"><label class="field"><span>Adresse de Home Assistant</span><input id="s_haurl" value="${esc(s.ha_url)}" placeholder="http://192.168.1.20:8123"></label>
       <label class="field"><span>Jeton Home Assistant ${secTag(s.secrets.ha)}</span><input id="s_hatok" type="password" autocomplete="off" placeholder="vide = inchangé"></label></div>
     <label class="field"><span>Service de notification Home Assistant (facultatif)</span><input id="s_haserv" value="${esc(s.ha_service)}" placeholder="notify.mobile_app_mon_iphone"></label>
     <button class="btn" id="b_svctest" type="button">Tester les services</button> <span id="svcres" class="muted"></span></div>
