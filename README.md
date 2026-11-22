@@ -16,7 +16,7 @@ Pourquoi ? Sonarr et Radarr s'appuient sur TheTVDB, qui donne souvent des titres
 - **Identifie avec TMDB** dans la langue choisie et déduit la catégorie (genres Animation, Documentaire, Reality, Talk…). Règles personnelles possibles.
 - **Retrouve le dossier de série existant** (même sous un nom différent) et y ajoute la saison ; sinon crée « Titre (année) ». Les remakes de même titre sont distingués par l'année.
 - Gère les séries qui ont **une fiche TMDB par saison** (ex. « Meurtres à Nordholm 1, 2, 3, 4 ») et renumérote les épisodes pour que Plex et Jellyfin les retrouvent.
-- **Nommage à la FileBot (facultatif)** : mêmes variables (`{n} {y} {s00e00} {t}`…), préréglages FileBot et Plex, titres d'épisodes TMDB, aperçu avant → après. Désactivé par défaut (noms d'origine conservés).
+- **Nommage au choix (facultatif)** : cases à cocher (année, résolution, codec H.265/AV1, audio, HDR, langue…) ou variables (`{n} {y} {s00e00} {t}`…), style Plex, titres d'épisodes TMDB, aperçu avant → après. Désactivé par défaut (noms d'origine conservés).
 - **Détecte les doublons** (film : titre + année ; épisode : série + SxxEyy).
 - **Copie sans doubler l'espace** : reflink (Btrfs/XFS), sinon lien physique, sinon copie. L'original reste en place (idéal avec Resilio, où supprimer = supprimer sur la seedbox).
 - **En cas de doute → « À trier »** : fiches TMDB avec affiche, vous choisissez, l'appli retient.

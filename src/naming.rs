@@ -1,9 +1,9 @@
-//! Nommage des fichiers rangés, dans l'esprit de FileBot : variables {n} {y} {ny} {s} {s00} {e} {e00}
+//! Nommage des fichiers rangés : variables {n} {y} {ny} {s} {s00} {e} {e00}
 //! {s00e00} {sxe} {t} {vf} {source} {vc} {group}.
 //!
 //! Préréglages :
 //! * `keep` (défaut) : noms d'origine conservés ;
-//! * `filebot` : les exemples de la documentation FileBot (`{n} ({y})`, `{n} - {s00e00} - {t}`) ;
+//! * `simple` : `Titre (année)` pour les films, `Série - S01E01 - Titre de l'épisode` pour les séries ;
 //! * `plex` : un dossier par film, `Season 01/` (ou le style déjà présent) pour les séries ;
 //! * `custom` : vos propres formats.
 
@@ -18,7 +18,8 @@ use std::path::{Path, PathBuf};
 pub enum Preset {
     #[default]
     Keep,
-    Filebot,
+    #[serde(alias = "filebot")]
+    Simple,
     Plex,
     Custom,
 }
@@ -72,7 +73,7 @@ impl Naming {
     pub fn formats(&self) -> Option<Formats> {
         match self.preset {
             Preset::Keep => None,
-            Preset::Filebot => Some(Formats { movie: "{n} ({y})".into(), episode: "{n} - {s00e00} - {t}".into(), season_folder: String::new(), series_folder: "{n} ({y})".into() }),
+            Preset::Simple => Some(Formats { movie: "{n} ({y})".into(), episode: "{n} - {s00e00} - {t}".into(), season_folder: String::new(), series_folder: "{n} ({y})".into() }),
             Preset::Plex => Some(Formats { movie: "{n} ({y})/{n} ({y})".into(), episode: "{n} - {s00e00} - {t}".into(), season_folder: "auto".into(), series_folder: "{n} ({y})".into() }),
             Preset::Custom => Some(Formats { movie: self.movie.clone(), episode: self.episode.clone(), season_folder: self.season_folder.clone(), series_folder: self.series_folder.clone() }),
         }
@@ -454,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn exemples_de_la_documentation_filebot() {
+    fn exemples_de_formats_simples() {
         // {n} - {s00e00} - {t} → « Dark Angel - S03E01 - Labyrinth » ; {n} ({y}) ; {ny} → « Avatar (2009) »
         assert_eq!(render("{n} - {s00e00} - {t}", &ctx_ep()).unwrap(), vec!["Dark Angel - S03E01 - Labyrinth"]);
         let m = Ctx { n: "The Man from Earth".into(), y: Some(2007), ..Default::default() };
@@ -619,7 +620,7 @@ mod tests {
 
     #[test]
     fn apercu_des_reglages() {
-        let (m, e) = preview(&Naming { preset: Preset::Filebot, ..Default::default() }.formats().unwrap()).unwrap();
+        let (m, e) = preview(&Naming { preset: Preset::Simple, ..Default::default() }.formats().unwrap()).unwrap();
         assert_eq!(m, "Avatar (2009).mkv");
         assert_eq!(e, "Dark Angel (2000)/Dark Angel - S03E01 - Labyrinthe.mkv");
         let (m, e) = preview(&fmt_plex()).unwrap();

@@ -241,7 +241,7 @@ Checklist (do it step by step, confirming each step with the user before moving 
 3. Titles language: ask which language the titles should be in (fr-FR, en-US, es-ES…) and set `language`.\n\
 4. Arrival folder: ask where downloads arrive (Resilio Sync folder, torrent client folder…). Use `browse_folders` to find it. With Docker the path is the one seen from inside the container, not on the host. Recommend action `copy` (the original stays, instant reflink/hard-link copies on the same Btrfs/XFS volume) and keep the default settle time (30 min) unless asked otherwise. Set it with `configure` (inputs). Mode `auto` lets TMDB decide the category; a fixed category sends everything of that folder to one destination.\n\
 5. Destination folders: one per category the user really uses (film, serie, dessin_anime, telerealite, documentaire, spectacle); an empty category sends such items to the manual `a_trier` queue. Use `browse_folders`. Arrival and destinations should live in ONE mount/volume for instant copies. Optionally add `film_libraries` (older movie folders, used only to detect duplicates) and `rules` (force a category for a title).\n\
-6. Naming: explain the presets: keep (original names, default), filebot, plex (one folder per movie, Season 01), custom (variables {{n}} {{y}} {{ny}} {{s00e00}} {{t}}…). If the user wants renaming, show `preview_naming` results for the candidate preset and apply it with `configure` (naming).\n\
+6. Naming: explain the presets: keep (original names, default), simple (Title (year) / Series - S01E01 - Episode title), plex (one folder per movie, Season 01), custom (variables {{n}} {{y}} {{ny}} {{s00e00}} {{t}}…). If the user wants renaming, show `preview_naming` results for the candidate preset and apply it with `configure` (naming).\n\
 7. Optional: Plex / Jellyfin / Home Assistant notifications (URLs via `configure`, tokens typed in the web UI), then `test_services`.\n\
 8. Dry-run review: call `scan`, then `plan` (filter by ranger, doublon, a_trier, attendre, ignorer). Walk the user through what the app WOULD do: destinations, renamings, duplicates. For `a_trier` items use `search_tmdb` and `choose` after the user picks the right title. Items in `attendre` are still being transferred. Fix the settings and rescan until the user is satisfied.\n\
 9. Only when the user explicitly validates the results: tell them real copies will start, get a clear yes, then call `set_dry_run` with enabled=false and confirm=\"{CONFIRM_PHRASE}\". Start prudently with a single item (`run` with `nom`), check it with `history`, mention `undo`, then run the rest. Offer `scan_interval_min` / `auto_range` for hands-off operation only if they ask.\n\
@@ -338,9 +338,9 @@ pub fn tools_def() -> Vec<Value> {
                 "destinations": {"type": "object", "description": "Destination folder per category, merged with the existing ones. Keys: film, serie, dessin_anime, telerealite, documentaire, spectacle. Empty string removes a category.", "additionalProperties": {"type": "string"}},
                 "film_libraries": {"type": "array", "items": {"type": "string"}, "description": "Extra movie folders read only to detect duplicates (replaces the list)."},
                 "rules": {"type": "array", "description": "Personal rules forcing the category of a title (replaces the list).", "items": {"type": "object", "properties": {"title": {"type": "string"}, "category": {"type": "string", "enum": cat_enum}}, "required": ["title", "category"]}},
-                "naming": {"description": "Naming of filed items: a preset name (keep, filebot, plex, custom) or an object {preset, movie, episode, season_folder, series_folder} merged into the current naming. Variables: {n} {y} {ny} {s} {s00} {e} {e00} {s00e00} {sxe} {t} {vf} {source} {vc} {group}; '/' creates a folder.", "oneOf": [
-                    {"type": "string", "enum": ["keep", "filebot", "plex", "custom"]},
-                    {"type": "object", "properties": {"preset": {"type": "string", "enum": ["keep", "filebot", "plex", "custom"]}, "movie": {"type": "string"}, "episode": {"type": "string"}, "season_folder": {"type": "string"}, "series_folder": {"type": "string"}}}
+                "naming": {"description": "Naming of filed items: a preset name (keep, simple, plex, custom) or an object {preset, movie, episode, season_folder, series_folder} merged into the current naming. Variables: {n} {y} {ny} {s} {s00} {e} {e00} {s00e00} {sxe} {t} {vf} {source} {vc} {group}; '/' creates a folder.", "oneOf": [
+                    {"type": "string", "enum": ["keep", "simple", "plex", "custom"]},
+                    {"type": "object", "properties": {"preset": {"type": "string", "enum": ["keep", "simple", "plex", "custom"]}, "movie": {"type": "string"}, "episode": {"type": "string"}, "season_folder": {"type": "string"}, "series_folder": {"type": "string"}}}
                 ]},
                 "plex_url": {"type": "string", "description": "e.g. http://host:32400 (empty to disable)."},
                 "jellyfin_url": {"type": "string", "description": "e.g. http://host:8096 (empty to disable)."},
@@ -386,9 +386,9 @@ pub fn tools_def() -> Vec<Value> {
             "category": {"type": "string", "enum": cat_enum, "description": "Optional: force the category."}
         }), &["nom", "tmdb_id", "media"], false),
         tool("preview_naming", "Preview a naming configuration without saving it: shows an example movie path and an example episode path. Accepts a preset name or an object {preset, movie, episode, season_folder, series_folder}. Reports an error for unknown variables.", json!({
-            "naming": {"description": "Preset name (keep, filebot, plex, custom) or an object.", "oneOf": [
-                {"type": "string", "enum": ["keep", "filebot", "plex", "custom"]},
-                {"type": "object", "properties": {"preset": {"type": "string", "enum": ["keep", "filebot", "plex", "custom"]}, "movie": {"type": "string"}, "episode": {"type": "string"}, "season_folder": {"type": "string"}, "series_folder": {"type": "string"}}}
+            "naming": {"description": "Preset name (keep, simple, plex, custom) or an object.", "oneOf": [
+                {"type": "string", "enum": ["keep", "simple", "plex", "custom"]},
+                {"type": "object", "properties": {"preset": {"type": "string", "enum": ["keep", "simple", "plex", "custom"]}, "movie": {"type": "string"}, "episode": {"type": "string"}, "season_folder": {"type": "string"}, "series_folder": {"type": "string"}}}
             ]}
         }), &["naming"], true),
         tool("history", "Recent real filings (most recent first): id, time, name, title, category, status (fait/annule/erreur), destination, file count, size, reason on errors. Empty in dry-run.", json!({"limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Default 10."}}), &[], true),
@@ -409,7 +409,7 @@ pub fn tools_def() -> Vec<Value> {
 
 const BASE_KEYS: [&str; 14] = ["language", "inputs", "destinations", "film_libraries", "rules", "plex_url", "jellyfin_url", "ha_url", "ha_service", "essai", "copy_method", "scan_interval_min", "auto_range", "naming"];
 const SECRET_KEYS: [&str; 4] = ["tmdb_key", "plex_token", "jellyfin_key", "ha_token"];
-const PRESETS: [&str; 4] = ["keep", "filebot", "plex", "custom"];
+const PRESETS: [&str; 4] = ["keep", "simple", "plex", "custom"];
 const NAMING_KEYS: [&str; 5] = ["preset", "movie", "episode", "season_folder", "series_folder"];
 
 fn want_str<'a>(k: &str, v: &'a Value) -> Result<&'a str, String> {

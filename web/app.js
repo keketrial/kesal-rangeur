@@ -445,9 +445,10 @@ async function vSettings(v) {
     <p class="muted" style="margin-top:0">Exemple : « Pékin Express » → télé / téléréalité. Une règle l'emporte sur la devinette de TMDB.</p><div id="rules"></div>
     <button class="btn small" id="addRule" type="button">+ Ajouter une règle</button></div>
 
-  <div class="card"><h3 style="margin-top:0">Noms des fichiers (comme FileBot) ${helpBtn("nommage")}</h3>
-    <label class="field"><span>Format</span><select id="n_preset">
-      ${[["keep", "Garder les noms d'origine (par défaut)"], ["filebot", "FileBot : Titre (année) · Série - S01E01 - Titre de l'épisode"], ["plex", "Plex : un dossier par film, dossiers de saison"], ["custom", "Choisir les éléments du nom (cases à cocher)"]].map(([k, n]) => `<option value="${k}" ${s.naming.preset === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+  <div class="card"><h3 style="margin-top:0">Noms des fichiers ${helpBtn("nommage")}</h3>
+    <label class="field"><span>Que mettre dans le nom des fichiers rangés ?</span><select id="n_preset">
+      ${[["keep", "Garder les noms d'origine (par défaut)"], ["custom", "Je choisis : année, codec (H.265, AV1…), résolution… (cases à cocher)"], ["simple", "Simple : Titre (année) · Série - S01E01 - Titre de l'épisode"], ["plex", "Style Plex : un dossier par film, dossiers de saison"]].map(([k, n]) => `<option value="${k}" ${s.naming.preset === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+    <p class="muted" id="n_hint" style="margin:4px 0 8px" ${s.naming.preset === "custom" ? "hidden" : ""}>Pour ajouter le codec (H.265, AV1…) ou la résolution au nom, choisissez « Je choisis » : des cases à cocher apparaissent.</p>
     <div id="n_custom" ${s.naming.preset === "custom" ? "" : "hidden"}>
       <div class="card" style="background:var(--bg)"><b>Cochez ce que vous voulez dans le nom</b>
         <div class="checks">${[["y", "Année"], ["vf", "Résolution (1080p)"], ["source", "Source (WEB, BluRay)"], ["vc", "Codec vidéo (H.265)"], ["audio", "Audio (EAC3, DTS)"], ["hdr", "HDR"], ["lang", "Langue"], ["group", "Groupe"], ["t", "Titre de l'épisode"], ["folder", "Un dossier par film"], ["season", "Dossiers de saison"]]
@@ -503,7 +504,7 @@ async function vSettings(v) {
   document.querySelectorAll("[data-nb]").forEach((e) => e.addEventListener("change", nbBuild));
   const namingNow = () => ({ preset: $("#n_preset").value, movie: $("#n_movie").value, episode: $("#n_episode").value, season_folder: $("#n_season").value, series_folder: $("#n_series").value });
   let npT; const nPrev = async () => {
-    $("#n_custom").hidden = $("#n_preset").value !== "custom";
+    $("#n_custom").hidden = $("#n_preset").value !== "custom"; $("#n_hint").hidden = $("#n_preset").value === "custom";
     try {
       const r = await api("/api/naming/preview", { method: "POST", body: { naming: namingNow() } });
       $("#n_prev").innerHTML = r.garde ? `<span class="muted">Les fichiers gardent le nom de la release.</span>`

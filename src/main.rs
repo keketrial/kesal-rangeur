@@ -155,7 +155,7 @@ async fn matrix(cfg_path: &str) -> anyhow::Result<()> {
     cases.push(("8 aucun dossier de films supplémentaire (doublons : film_recent seulement)".into(), Box::new(|c| c.film_libraries.clear()), "", true));
     cases.push(("9 langue espagnol (es-ES)".into(), Box::new(|c| c.language = "es-ES".into()), "es-ES", false));
     cases.push(("10 langue anglais (en-US)".into(), Box::new(|c| c.language = "en-US".into()), "en-US", false));
-    cases.push(("12 nommage FileBot".into(), Box::new(|c| c.naming.preset = naming::Preset::Filebot), "", false));
+    cases.push(("12 nommage simple".into(), Box::new(|c| c.naming.preset = naming::Preset::Simple), "", false));
     cases.push(("13 nommage Plex".into(), Box::new(|c| c.naming.preset = naming::Preset::Plex), "", false));
     cases.push(("14 nommage perso : film « {ny} [{vf}] », épisode « {s00e00} {t} », saison « S{s} »".into(), Box::new(|c| {
         c.naming.preset = naming::Preset::Custom;
