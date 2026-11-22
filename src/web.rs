@@ -8,7 +8,7 @@ use crate::library::LibEntry;
 use crate::plan::{Choice, Decision, Item, Planner};
 use crate::tmdb::{Candidate, Media, Tmdb};
 use crate::{norm, parser};
-use axum::extract::{Query, Request, State};
+use axum::extract::{ConnectInfo, Query, Request, State};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::http::{header, StatusCode};
@@ -17,7 +17,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -52,6 +53,8 @@ pub struct AppState {
     pub history: History,
     /// Mot de passe facultatif (variable KESAL_PASSWORD) : protège toute l'interface.
     pub password: Option<String>,
+    /// Essais de mot de passe ratés (par adresse) : blocage temporaire contre les devinettes.
+    pub logins: StdMutex<LoginGuard>,
     /// Noms d'hôte supplémentaires autorisés (KESAL_ALLOWED_HOSTS), ex. un nom de domaine derrière un tunnel.
     pub allowed_hosts: Vec<String>,
     /// Éléments en cours de rangement (évite les doubles clics) et file d'attente : une copie à la fois.
@@ -101,6 +104,7 @@ pub async fn serve(cfg_path: PathBuf, bind: String) -> anyhow::Result<()> {
         history: History::load(&data_dir),
         password: std::env::var("KESAL_PASSWORD").ok().filter(|p| !p.is_empty()),
         allowed_hosts: std::env::var("KESAL_ALLOWED_HOSTS").unwrap_or_default().split(',').map(|h| h.trim().to_lowercase()).filter(|h| !h.is_empty()).collect(),
+        logins: StdMutex::new(LoginGuard::default()),
         busy: StdMutex::new(HashSet::new()),
         gate: tokio::sync::Semaphore::new(1),
     });
@@ -138,7 +142,7 @@ pub async fn serve(cfg_path: PathBuf, bind: String) -> anyhow::Result<()> {
     tokio::spawn(sweep_loop(st.clone()));
     tokio::spawn(scheduler(st.clone()));
     let listener = tokio::net::TcpListener::bind(&bind).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
     Ok(())
 }
 
@@ -922,11 +926,57 @@ fn deny(code: StatusCode, msg: &str) -> Response {
     (code, msg.to_string()).into_response()
 }
 
-async fn guard(State(st): State<S>, req: Request, next: Next) -> Response {
+/// Adresse du client : celle de la connexion ; derrière un proxy local (tunnel, Docker), on lit l'en-tête transmis par le proxy.
+fn client_key(peer: IpAddr, fwd: Option<&str>) -> String {
+    let local = match peer {
+        IpAddr::V4(a) => a.is_loopback() || a.is_private(),
+        IpAddr::V6(a) => a.is_loopback() || (a.segments()[0] & 0xfe00) == 0xfc00,
+    };
+    if local {
+        if let Some(ip) = fwd.and_then(|f| f.split(',').next()).map(|x| x.trim()).filter(|x| x.parse::<IpAddr>().is_ok()) {
+            return ip.to_string();
+        }
+    }
+    peer.to_string()
+}
+
+/// Essais de mot de passe ratés : 5 erreurs en 10 minutes → blocage de 15 minutes pour cette adresse.
+#[derive(Default)]
+pub struct LoginGuard {
+    seen: HashMap<String, (u32, u64, u64)>, // adresse → (erreurs, début de fenêtre, bloqué jusqu'à)
+}
+impl LoginGuard {
+    const MAX: u32 = 5;
+    const WINDOW: u64 = 600;
+    const LOCK: u64 = 900;
+    /// Secondes restantes de blocage, s'il y en a.
+    pub fn locked(&self, key: &str, now: u64) -> Option<u64> {
+        self.seen.get(key).and_then(|e| (e.2 > now).then(|| e.2 - now))
+    }
+    pub fn fail(&mut self, key: &str, now: u64) {
+        if self.seen.len() > 1000 {
+            self.seen.retain(|_, e| e.2 > now || now.saturating_sub(e.1) < Self::WINDOW);
+        }
+        let e = self.seen.entry(key.to_string()).or_insert((0, now, 0));
+        if now.saturating_sub(e.1) >= Self::WINDOW {
+            *e = (0, now, 0);
+        }
+        e.0 += 1;
+        if e.0 >= Self::MAX {
+            e.2 = now + Self::LOCK;
+            *e = (0, now, e.2);
+        }
+    }
+    pub fn ok(&mut self, key: &str) {
+        self.seen.remove(key);
+    }
+}
+
+async fn guard(State(st): State<S>, ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request, next: Next) -> Response {
     // on copie les en-têtes utiles avant toute attente (la requête ne doit pas être empruntée pendant `.await`)
-    let (host, auth, origin, mutating) = {
-        let get = |n: header::HeaderName| req.headers().get(n).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
-        (get(header::HOST).unwrap_or_default(), get(header::AUTHORIZATION), get(header::ORIGIN), !matches!(*req.method(), axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS))
+    let (host, auth, origin, mutating, fwd) = {
+        let get = |n: &str| req.headers().get(n).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+        (get("host").unwrap_or_default(), get("authorization"), get("origin"), !matches!(*req.method(), axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS), get("cf-connecting-ip").or_else(|| get("x-forwarded-for")))
     };
     if !host_allowed(&host, &st.allowed_hosts) {
         return deny(StatusCode::FORBIDDEN, "Nom d'hôte non autorisé. Pour y accéder par un nom de domaine, ajoutez-le à KESAL_ALLOWED_HOSTS.");
@@ -936,16 +986,35 @@ async fn guard(State(st): State<S>, req: Request, next: Next) -> Response {
         return (StatusCode::OK, "ok").into_response();
     }
     if let Some(pw) = &st.password {
+        let key = client_key(peer.ip(), fwd.as_deref());
+        if let Some(wait) = st.logins.lock().unwrap().locked(&key, now()) {
+            let mut r = deny(StatusCode::TOO_MANY_REQUESTS, &format!("Trop d'essais de mot de passe. Réessayez dans {} min.", wait / 60 + 1));
+            r.headers_mut().insert(header::RETRY_AFTER, header::HeaderValue::from(wait));
+            return r;
+        }
         if !basic_password_ok(auth.as_deref(), pw) {
+            // Le navigateur envoie d'abord une requête sans identifiants : ce n'est pas une erreur de mot de passe.
+            if auth.is_some() {
+                st.logins.lock().unwrap().fail(&key, now());
+                st.log("avert", format!("Mot de passe refusé depuis {key}"));
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
             let mut r = deny(StatusCode::UNAUTHORIZED, "Mot de passe requis.");
             r.headers_mut().insert(header::WWW_AUTHENTICATE, header::HeaderValue::from_static("Basic realm=\"kesal-rangeur\", charset=\"UTF-8\""));
             return r;
         }
+        st.logins.lock().unwrap().ok(&key);
     }
     if mutating && !origin_ok(origin.as_deref(), &host) {
         return deny(StatusCode::FORBIDDEN, "Requête refusée : elle ne vient pas de cette interface.");
     }
-    next.run(req).await
+    let mut r = next.run(req).await;
+    let h = r.headers_mut();
+    h.insert(header::X_FRAME_OPTIONS, header::HeaderValue::from_static("DENY"));
+    h.insert(header::X_CONTENT_TYPE_OPTIONS, header::HeaderValue::from_static("nosniff"));
+    h.insert(header::REFERRER_POLICY, header::HeaderValue::from_static("no-referrer"));
+    h.entry(header::CACHE_CONTROL).or_insert(header::HeaderValue::from_static("no-store"));
+    r
 }
 
 /// Lance une analyse en la protégeant d'un plantage : l'état « en cours » ne reste jamais bloqué.
@@ -1002,6 +1071,32 @@ mod tests {
         assert!(origin_ok(Some("http://192.168.1.10:3050"), "192.168.1.10:3050"));
         assert!(!origin_ok(Some("http://evil.com"), "192.168.1.10:3050"));
         assert!(!origin_ok(Some("https://192.168.1.10:3050.evil.com"), "192.168.1.10:3050"));
+    }
+
+    #[test]
+    fn blocage_apres_cinq_erreurs() {
+        let mut g = LoginGuard::default();
+        for i in 0..4 {
+            g.fail("1.2.3.4", 100 + i);
+            assert!(g.locked("1.2.3.4", 110).is_none());
+        }
+        g.fail("1.2.3.4", 105);
+        assert!(g.locked("1.2.3.4", 110).is_some());
+        assert!(g.locked("5.6.7.8", 110).is_none(), "les autres adresses ne sont pas touchées");
+        assert!(g.locked("1.2.3.4", 105 + 901).is_none(), "le blocage se lève au bout de 15 min");
+        g.fail("9.9.9.9", 0);
+        g.ok("9.9.9.9");
+        for _ in 0..4 { g.fail("9.9.9.9", 1); }
+        assert!(g.locked("9.9.9.9", 2).is_none(), "un bon mot de passe remet le compteur à zéro");
+    }
+
+    #[test]
+    fn adresse_du_client() {
+        let lo: IpAddr = "127.0.0.1".parse().unwrap();
+        let pub_ip: IpAddr = "8.8.8.8".parse().unwrap();
+        assert_eq!(client_key(lo, Some("203.0.113.7, 10.0.0.1")), "203.0.113.7");
+        assert_eq!(client_key(lo, Some("pas-une-ip")), "127.0.0.1");
+        assert_eq!(client_key(pub_ip, Some("203.0.113.7")), "8.8.8.8", "un client distant ne peut pas se faire passer pour un autre");
     }
 
     #[test]
