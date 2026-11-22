@@ -256,10 +256,27 @@ function itemCard(it, opts = {}) {
     <div class="orig mono">${esc(it.nom)}</div><div class="title">${title}</div>
     <div class="row">${tags.join("")}</div>${detail}${actions}</div></div>`;
 }
+// Après un clic « Ranger » / « Essayer » : la carte disparaît tout de suite (la suivante vient sous la souris, plus de curseur bloqué),
+// puis on attend la fin réelle du travail avant de relire la liste.
+S.pending = new Set();
+function launched(b, nom, msg, extra) {
+  S.pending.add(nom);
+  const card = b.closest(".card"); if (card && S.view === "plan") card.remove();
+  toast(msg);
+  const finish = async () => { S.pending.delete(nom); await loadPlan(); invalidate("accueil", "plan", "trier", "historique", ...extra); await refreshStatus(); render(); };
+  let n = 0;
+  const poll = async () => {
+    n++;
+    try { await refreshStatus(); } catch (e) { /* on réessaie */ }
+    if ((S.status && S.status.en_cours === 0 && n >= 2) || n > 300) return finish();
+    setTimeout(poll, 2000);
+  };
+  setTimeout(poll, 1500);
+}
 function bindRun(root) {
   root.querySelectorAll("[data-run]").forEach((b) => b.addEventListener("click", async () => {
     b.disabled = true;
-    try { await api("/api/run", { method: "POST", body: { nom: b.dataset.run } }); toast("Rangement lancé…"); setTimeout(async () => { await loadPlan(); invalidate("accueil", "plan", "trier", "historique"); await refreshStatus(); render(); }, 2500); }
+    try { await api("/api/run", { method: "POST", body: { nom: b.dataset.run } }); launched(b, b.dataset.run, "Rangement lancé…", []); }
     catch (e) { toast(e.message); b.disabled = false; }
   }));
 }
@@ -268,7 +285,7 @@ function bindTest(root) {
     const it = S.items.find((i) => i.nom === b.dataset.test); if (!it || !it.decision.vers) return;
     if (!confirm(`ESSAI sur UN seul élément (le reste de la bibliothèque n'est pas touché)\n\n${it.nom}\n→ ${it.decision.vers}\n\nL'appli va COPIER ce seul élément (l'original reste en place), même si le dossier d'arrivée est réglé sur « Déplacer ». Vous pourrez l'annuler depuis l'Historique.\n\nContinuer ?`)) return;
     b.disabled = true;
-    try { await api("/api/run", { method: "POST", body: { nom: b.dataset.test, test: true } }); toast("Essai lancé : voir l'Historique"); setTimeout(async () => { await loadPlan(); invalidate("accueil", "plan", "trier", "historique", "simulation"); await refreshStatus(); render(); }, 2500); }
+    try { await api("/api/run", { method: "POST", body: { nom: b.dataset.test, test: true } }); launched(b, b.dataset.test, "Essai lancé : voir l'Historique", ["simulation"]); }
     catch (e) { toast(e.message); b.disabled = false; }
   }));
 }
@@ -286,7 +303,7 @@ async function vPlan(v) {
   if (!S.items.length) await loadPlan();
   const c = counts(); const order = ["ranger", "doublon", "a_trier", "attendre", "ignorer", ...(c.fait ? ["fait"] : [])];
   const real = S.status && !S.status.essai;
-  const list = S.items.filter((i) => decisionOf(i) === S.filter);
+  const list = S.items.filter((i) => decisionOf(i) === S.filter && !S.pending.has(i.nom));
   v.innerHTML = `<h2>Détail ${helpBtn("attente")}</h2><p class="lead">Ce que l'appli ferait de chaque élément arrivé. Rien n'est exécuté.</p>
     <div class="chips">${order.map((k) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${k === "fait" ? "Rangés" : t("d_" + k)} (${c[k] || 0})</button>`).join("")}
       ${real && S.filter === "ranger" && list.length ? `<button class="btn small primary" id="runAll" style="margin-left:auto">Tout ranger (${list.length})</button>` : ""}</div>
