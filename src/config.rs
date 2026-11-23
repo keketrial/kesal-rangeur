@@ -78,8 +78,8 @@ pub struct Config {
     /// Méthode de copie : auto (reflink → lien physique → copie), reflink, hardlink ou copy.
     #[serde(default)]
     pub copy_method: crate::exec::Method,
-    /// Analyse automatique toutes les N minutes (0 = seulement à la demande).
-    #[serde(default)]
+    /// Analyse automatique toutes les N minutes (défaut 2 ; 0 = seulement à la demande).
+    #[serde(default = "default_scan_interval")]
     pub scan_interval_min: u64,
     /// Après chaque analyse, range seul ce qui est sûr (ignoré en mode essai).
     #[serde(default)]
@@ -212,4 +212,8 @@ impl Config {
             .map_err(|e| anyhow::anyhow!("clé TMDB introuvable ({}) : {e}", p.display()))?;
         Ok(s.trim().to_string())
     }
+}
+
+fn default_scan_interval() -> u64 {
+    2
 }

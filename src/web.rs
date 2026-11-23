@@ -154,7 +154,7 @@ pub fn default_config() -> Config {
         naming: Default::default(),
         essai: true,
         copy_method: Default::default(),
-        scan_interval_min: 0,
+        scan_interval_min: 2,
         auto_range: false,
         data_dir: "data".into(),
         inputs: vec![],
@@ -362,7 +362,7 @@ async fn api_mode(State(st): State<S>, Json(req): Json<ModeReq>) -> R<Value> {
             cfg.essai = false;
             cfg.auto_range = req.mode == "auto";
             if req.mode == "auto" {
-                let n = req.interval_min.unwrap_or(if cfg.scan_interval_min > 0 { cfg.scan_interval_min } else { 15 });
+                let n = req.interval_min.unwrap_or(if cfg.scan_interval_min > 0 { cfg.scan_interval_min } else { 2 });
                 cfg.scan_interval_min = n.clamp(1, 1440);
             }
         }

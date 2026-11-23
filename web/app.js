@@ -73,7 +73,7 @@ async function setMode(m) {
   if (m !== "simulation") {
     if (!st.dernier_scan) { toast("Lancez d'abord une analyse et regardez la Simulation."); return; }
     const msg = m === "auto"
-      ? `Passer en mode AUTO ?\n\nL'appli analysera le dossier d'arrivée toutes les ${st.intervalle_min || 15} min et rangera seule ce qui est sûr (action choisie pour chaque dossier : copier ou déplacer). Doublons et doutes ne sont jamais rangés seuls. Chaque rangement reste annulable.`
+      ? `Passer en mode AUTO ?\n\nL'appli analysera le dossier d'arrivée toutes les ${st.intervalle_min || 2} min et rangera seule ce qui est sûr (action choisie pour chaque dossier : copier ou déplacer). Doublons et doutes ne sont jamais rangés seuls. Chaque rangement reste annulable.`
       : `Passer en mode MANUEL ?\n\nRien ne se fera tout seul : vous validez chaque élément avec « Valider et ranger ». Chaque rangement reste annulable.`;
     if (!confirm(msg)) return;
   }
