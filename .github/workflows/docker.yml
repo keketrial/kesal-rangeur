@@ -1,0 +1,55 @@
+name: image-docker
+# Construit et publie l'image Docker d'une version DÉJÀ publiée, à partir de ses programmes Linux (rapide, sans recompiler).
+# Lancé automatiquement par « publication », ou à la main : Actions → image-docker → Run workflow → étiquette (ex. v0.1.1).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version à publier (ex. v0.1.1)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4   # branche par défaut : on n'a besoin que de Dockerfile.release
+      - name: Récupérer les programmes de la version
+        run: |
+          mkdir -p bin/amd64 bin/arm64
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p '*linux-x86_64.tar.gz' -O - | tar xz -C bin/amd64
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p '*linux-arm64.tar.gz' -O - | tar xz -C bin/arm64
+          chmod +x bin/*/kesal-rangeur
+      - name: Étiquettes de l'image
+        id: tags
+        run: |
+          v="${TAG#v}"
+          img="ghcr.io/${GITHUB_REPOSITORY,,}"
+          t="$img:$v"
+          case "$v" in
+            *-*) t="$t,$img:beta" ;;
+            *) t="$t,$img:${v%.*},$img:latest" ;;
+          esac
+          echo "liste=$t" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.liste }}
