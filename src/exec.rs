@@ -225,6 +225,7 @@ pub fn execute(r: &Request) -> Result<Entry, ExecError> {
         Settle::Pret => {}
         Settle::Transfert { fichier } => return Err(ExecError::PasPret(format!("transfert en cours ({fichier})"))),
         Settle::Attente { minutes } => return Err(ExecError::PasPret(format!("modifié récemment, encore {minutes} min"))),
+        Settle::Vide => return Err(ExecError::PasPret("aucune vidéo pour l'instant (fichiers pas encore arrivés)".into())),
     }
     if r.vers.exists() {
         return Err(ExecError::Existe(r.vers.to_path_buf()));
@@ -363,6 +364,7 @@ fn execute_plan(r: &Request) -> Result<Entry, ExecError> {
         Settle::Pret => {}
         Settle::Transfert { fichier } => return Err(ExecError::PasPret(format!("transfert en cours ({fichier})"))),
         Settle::Attente { minutes } => return Err(ExecError::PasPret(format!("modifié récemment, encore {minutes} min"))),
+        Settle::Vide => return Err(ExecError::PasPret("aucune vidéo pour l'instant (fichiers pas encore arrivés)".into())),
     }
     let mut seen = std::collections::HashSet::new();
     for (_, dst) in r.plan {
@@ -573,6 +575,19 @@ mod tests {
     }
     fn req<'a>(src: &'a Path, vers: &'a Path, ren: &'a [Renommage], action: Action, method: Method) -> Request<'a> {
         Request { nom: "x", titre: "X", categorie: Some(Category::Serie), source: src, vers, renommages: ren, action, method, settle_minutes: 30, plan: &[] }
+    }
+
+    #[test]
+    fn dossier_vide_refuse_et_rien_n_est_deplace() {
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("arrivee/Serie.S01.1080p");
+        fs::create_dir_all(&src).unwrap();
+        age_dir(&src);
+        let vers = t.path().join("series/Serie (2026)/Serie.S01.1080p");
+        let r = execute(&Request { settle_minutes: 0, ..req(&src, &vers, &[], Action::Move, Method::Copy) });
+        assert!(matches!(r, Err(ExecError::PasPret(_))), "{r:?}");
+        assert!(src.exists(), "le dossier d'origine doit rester");
+        assert!(!t.path().join("series").exists(), "rien ne doit être créé");
     }
 
     #[test]

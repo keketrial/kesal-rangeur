@@ -23,6 +23,8 @@ pub enum Settle {
     Transfert { fichier: String },
     /// Modifié récemment : encore `minutes` minutes à attendre.
     Attente { minutes: u64 },
+    /// Aucune vidéo (non vide) dedans : les fichiers ne sont pas encore arrivés (ex. dossier créé par Resilio avant son contenu).
+    Vide,
 }
 
 #[cfg(unix)]
@@ -39,6 +41,7 @@ fn ctime_of(_md: &std::fs::Metadata) -> Option<SystemTime> {
 /// Un élément est prêt si aucun fichier temporaire n'est présent et que rien n'a changé depuis `settle_minutes`.
 pub fn check_settled(path: &Path, settle_minutes: u64) -> Settle {
     let mut newest = SystemTime::UNIX_EPOCH;
+    let mut video = false;
     for e in WalkDir::new(path) {
         let Ok(e) = e else {
             return Settle::Transfert { fichier: "dossier illisible (droits ?)".into() };
@@ -50,6 +53,9 @@ pub fn check_settled(path: &Path, settle_minutes: u64) -> Settle {
             }
         }
         if let Ok(md) = e.metadata() {
+            if md.is_file() && md.len() > 0 && name.rsplit_once('.').map_or(false, |x| parser::is_video_ext(x.1)) {
+                video = true;
+            }
             if let Ok(m) = md.modified() {
                 // Resilio garde la date d'origine : une date dans le futur (horloge de la seedbox en avance) ne doit pas bloquer
                 // éternellement. On prend alors la date de changement locale (ctime), qui est le vrai moment d'arrivée.
@@ -57,6 +63,10 @@ pub fn check_settled(path: &Path, settle_minutes: u64) -> Settle {
                 newest = newest.max(m);
             }
         }
+    }
+    // Un dossier sans aucune vidéo n'est jamais « prêt » : on ne range pas une coquille vide.
+    if !video {
+        return Settle::Vide;
     }
     let age = SystemTime::now().duration_since(newest).unwrap_or(Duration::ZERO);
     let need = Duration::from_secs(settle_minutes * 60);
@@ -411,6 +421,10 @@ impl Planner {
                 item.decision = Decision::Attendre { raison: format!("modifié récemment, encore {minutes} min") };
                 return item;
             }
+            Settle::Vide => {
+                item.decision = Decision::Attendre { raison: "aucune vidéo pour l'instant (fichiers pas encore arrivés)".into() };
+                return item;
+            }
         }
         item.decision = self.decide(&mut item, input).await;
         item
@@ -660,6 +674,23 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(matches!(check_settled(&f, 0), Settle::Pret), "avec 0 minute de calme, un fichier à date future est prêt");
+    }
+
+    #[test]
+    fn dossier_sans_video_n_est_jamais_pret() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path().join("The.Altruists.S01.MULTi.1080p");
+        std::fs::create_dir(&d).unwrap();
+        // dossier vide (Resilio a créé le dossier avant son contenu)
+        assert!(matches!(check_settled(&d, 0), Settle::Vide));
+        // sous-dossier vide, fichier texte seul, vidéo de 0 octet : toujours « pas arrivé »
+        std::fs::create_dir(d.join("S01")).unwrap();
+        std::fs::write(d.join("a.nfo"), "info").unwrap();
+        std::fs::write(d.join("S01E01.mkv"), "").unwrap();
+        assert!(matches!(check_settled(&d, 0), Settle::Vide));
+        // dès qu'une vraie vidéo est là, le dossier est prêt
+        std::fs::write(d.join("S01E01.mkv"), "x").unwrap();
+        assert!(matches!(check_settled(&d, 0), Settle::Pret));
     }
 
     #[test]
