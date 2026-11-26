@@ -852,7 +852,7 @@ mod tests {
         let (pl, arr, input) = labo(t.path(), "Show.S01.MULTi.1080p.WEB-GRP", &[1, 2, 3, 4, 5]);
         let it = pl.plan_one(&input, &arr.join("Show.S01.MULTi.1080p.WEB-GRP")).await;
         let Decision::Ranger { fichiers, .. } = &it.decision else { panic!("{:?}", it.decision) };
-        let mut noms: Vec<String> = fichiers.iter().map(|f| f.dst.strip_prefix(t.path().join("series")).unwrap().to_string_lossy().to_string()).collect();
+        let mut noms: Vec<String> = fichiers.iter().map(|f| f.dst.strip_prefix(t.path().join("series")).unwrap().to_string_lossy().replace('\\', "/")).collect();
         noms.sort();
         assert_eq!(
             noms,
@@ -907,7 +907,7 @@ mod tests {
         let lib = pl.find_series(&["Show"], None).expect("série de la bibliothèque");
         let d = pl.partial_decision(&it, lib).expect("comparaison épisode par épisode");
         let Decision::Ranger { fichiers, .. } = &d else { panic!("{d:?}") };
-        let mut noms: Vec<String> = fichiers.iter().map(|f| f.dst.strip_prefix(t.path().join("series")).unwrap().to_string_lossy().to_string()).collect();
+        let mut noms: Vec<String> = fichiers.iter().map(|f| f.dst.strip_prefix(t.path().join("series")).unwrap().to_string_lossy().replace('\\', "/")).collect();
         noms.sort();
         assert_eq!(noms, vec!["Show (2020)/Season 1/Show.S01E04.mkv", "Show (2020)/Show.S02.1080p/Show.S02E01.mkv", "Show (2020)/Show.S02.1080p/Show.S02E02.mkv"]);
     }
