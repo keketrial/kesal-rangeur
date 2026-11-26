@@ -53,16 +53,23 @@ jobs:
     permissions:
       contents: write   # créer la publication GitHub
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: fichiers
           merge-multiple: true
       - name: Sommes de contrôle
         run: cd fichiers && sha256sum * > SHA256SUMS.txt
+      - name: Notes de version (section du CHANGELOG.md pour cette étiquette)
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '/^## /{p=($2==v)} p' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Voir le CHANGELOG.md" > notes.md
       - uses: softprops/action-gh-release@v2
         with:
           files: fichiers/*
-          generate_release_notes: true
+          body_path: notes.md
+          generate_release_notes: false
           # « v1.2.0-beta.1 » est publié comme préversion
           prerelease: ${{ contains(github.ref_name, '-') }}
 
