@@ -146,6 +146,10 @@ impl MovieIndex {
                 if p.is_file() && !p.extension().and_then(|x| x.to_str()).map_or(false, parser::is_video_ext) {
                     continue;
                 }
+                // un dossier sans aucune vidéo n'est pas « déjà présent »
+                if p.is_dir() && !library::has_video(&p) {
+                    continue;
+                }
                 let r = parser::parse(&name);
                 if r.title.is_empty() {
                     continue;
