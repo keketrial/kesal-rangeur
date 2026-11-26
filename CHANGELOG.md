@@ -1,5 +1,13 @@
 # Notes de version / Changelog
 
+## 0.1.2 — 26/11/2026
+
+**Correction**
+- Une destination qui n'est qu'une **coquille vide** (dossiers sans aucun fichier, restes d'un ancien rangement raté) ne bloque plus le rangement : l'appli la reprend au lieu de répondre « la destination existe déjà ». Un dossier qui contient le moindre fichier reste protégé, rien n'est jamais écrasé.
+
+**Publication**
+- L'image Docker est construite automatiquement à partir des programmes déjà compilés (bien plus rapide).
+
 ## 0.1.1 — 26/11/2026
 
 **Corrections importantes**

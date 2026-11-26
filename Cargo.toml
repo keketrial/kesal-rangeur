@@ -1,6 +1,6 @@
 [package]
 name = "kesal-rangeur"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Range automatiquement les téléchargements de médias (films, séries…) avec les titres TMDB dans votre langue"
 license = "GPL-3.0-or-later"

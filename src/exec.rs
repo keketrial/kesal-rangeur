@@ -227,7 +227,9 @@ pub fn execute(r: &Request) -> Result<Entry, ExecError> {
         Settle::Attente { minutes } => return Err(ExecError::PasPret(format!("modifié récemment, encore {minutes} min"))),
         Settle::Vide => return Err(ExecError::PasPret("aucune vidéo pour l'instant (fichiers pas encore arrivés)".into())),
     }
-    if r.vers.exists() {
+    // Une destination qui n'est qu'une coquille vide (dossiers sans aucun fichier, restes d'un ancien rangement raté)
+    // ne contient rien à protéger : on la retire pour reprendre sa place.
+    if r.vers.exists() && !clear_empty_shell(r.vers) {
         return Err(ExecError::Existe(r.vers.to_path_buf()));
     }
     if r.vers.starts_with(r.source) || r.source.starts_with(r.vers) {
@@ -352,6 +354,25 @@ fn nearest_existing(p: &Path) -> PathBuf {
 
 /// Rangement avec chemins calculés : chaque fichier est copié dans un dossier provisoire, vérifié, puis mis en place.
 /// En cas d'échec à n'importe quel moment, tout ce qui a été placé est retiré.
+/// Si `p` est un dossier qui ne contient AUCUN fichier (seulement des dossiers vides, à n'importe quelle profondeur),
+/// le supprime (bas en haut, avec `remove_dir` qui refuse tout dossier non vide) et renvoie vrai. Sinon ne touche à rien.
+fn clear_empty_shell(p: &Path) -> bool {
+    let Ok(md) = fs::symlink_metadata(p) else { return false };
+    if !md.is_dir() {
+        return false;
+    }
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for e in WalkDir::new(p).follow_links(false) {
+        let Ok(e) = e else { return false };
+        if !e.file_type().is_dir() {
+            return false; // un fichier, un lien… : ce n'est pas vide
+        }
+        dirs.push(e.path().to_path_buf());
+    }
+    dirs.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
+    dirs.iter().all(|d| fs::remove_dir(d).is_ok())
+}
+
 fn execute_plan(r: &Request) -> Result<Entry, ExecError> {
     refuse_symlink(r.source)?;
     for (src, _) in r.plan {
@@ -588,6 +609,34 @@ mod tests {
         assert!(matches!(r, Err(ExecError::PasPret(_))), "{r:?}");
         assert!(src.exists(), "le dossier d'origine doit rester");
         assert!(!t.path().join("series").exists(), "rien ne doit être créé");
+    }
+
+    #[test]
+    fn destination_coquille_vide_est_reprise() {
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("arrivee/Serie.S01.1080p");
+        mk(&src.join("Serie.S01E01.mkv"), "episode");
+        age_dir(&src);
+        // reste d'un ancien rangement raté : dossiers vides à la destination
+        let vers = t.path().join("series/Serie (2026)/Serie.S01.1080p");
+        fs::create_dir_all(vers.join("vide")).unwrap();
+        let e = execute(&Request { settle_minutes: 0, ..req(&src, &vers, &[], Action::Move, Method::Copy) }).unwrap();
+        assert_eq!(fs::read_to_string(vers.join("Serie.S01E01.mkv")).unwrap(), "episode");
+        assert!(!e.fichiers.is_empty());
+    }
+
+    #[test]
+    fn destination_avec_un_fichier_reste_protegee() {
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("arrivee/Serie.S01.1080p");
+        mk(&src.join("Serie.S01E01.mkv"), "nouveau");
+        age_dir(&src);
+        let vers = t.path().join("series/Serie (2026)/Serie.S01.1080p");
+        mk(&vers.join("deja-la.mkv"), "ancien");
+        let r = execute(&Request { settle_minutes: 0, ..req(&src, &vers, &[], Action::Move, Method::Copy) });
+        assert!(matches!(r, Err(ExecError::Existe(_))), "{r:?}");
+        assert_eq!(fs::read_to_string(vers.join("deja-la.mkv")).unwrap(), "ancien");
+        assert!(src.join("Serie.S01E01.mkv").exists());
     }
 
     #[test]
