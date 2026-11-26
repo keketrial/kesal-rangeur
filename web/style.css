@@ -23,6 +23,8 @@ body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-ap
 .logo{width:22px;height:22px;border-radius:6px;background:var(--accent);position:relative;display:inline-block}
 .logo::after{content:"";position:absolute;left:4px;top:7px;width:14px;height:9px;background:var(--accent-ink);border-radius:1px 3px 1px 1px;opacity:.95}
 .spacer{flex:1}
+.ver{font-size:12px;color:var(--muted,#6b7280);text-decoration:none;padding:1px 7px;border:1px solid var(--line);border-radius:99px}
+.ver:hover{color:var(--accent)}
 .pill{font-size:12px;padding:3px 9px;border-radius:99px;background:var(--infobg);color:var(--info);white-space:nowrap}
 .pill.busy{background:var(--warnbg);color:var(--warn)}
 .btn{font:inherit;font-size:14px;padding:7px 13px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;cursor:pointer;min-height:36px}

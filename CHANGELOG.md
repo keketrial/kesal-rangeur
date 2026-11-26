@@ -1,5 +1,10 @@
 # Notes de version / Changelog
 
+## 0.1.4 — 26/11/2026
+
+**Nouveauté**
+- La **version installée** est maintenant affichée en haut de l'interface, à côté du nom (un clic ouvre la page des versions sur GitHub), pour savoir en un coup d'œil quelle version tourne.
+
 ## 0.1.3 — 26/11/2026
 
 **Nouveauté : une saison ou une série entière peut arriver par-dessus des épisodes déjà rangés**

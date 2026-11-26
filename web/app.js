@@ -94,6 +94,7 @@ async function refreshStatus() {
   S.status = fresh;
   if (changed) { invalidate("accueil", "plan", "trier"); if (S.status && document.getElementById("v-" + S.view) && ["accueil", "plan", "trier"].includes(S.view) && !S._busyRender) { S._busyRender = true; render().finally(() => { S._busyRender = false; }); } }
   const st = S.status;
+  if (st.version) { const v = $("#ver"); v.textContent = "v" + st.version; v.hidden = false; }
   $("#pill").textContent = st.scanning ? t("pill_busy") : (st.en_cours ? "Rangement…" : "");
   $("#pill").hidden = !(st.scanning || st.en_cours); $("#pill").className = "pill busy";
   renderModeSwitch(st);
