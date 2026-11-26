@@ -26,7 +26,7 @@ Au premier lancement, l'appli est en **Simulation** : elle montre tout ce qu'ell
 ```yaml
 services:
   rangeur:
-    image: ghcr.io/VOTRE-COMPTE/kesal-rangeur:latest
+    image: ghcr.io/keketrial/kesal-rangeur:latest
     ports: ["3050:3050"]
     user: "1026:100"                 # PUID:PGID du propriétaire de vos médias
     volumes:
@@ -36,9 +36,12 @@ services:
 
 Gardez **un seul montage** pour l'arrivée et les destinations : c'est ce qui rend les copies et les déplacements instantanés. Ouvrez ensuite `http://adresse-du-serveur:3050`.
 
-### Binaires
+### Windows, Linux, macOS
 
-Windows, Linux et macOS : voir les *Releases*. Lancez `kesal-rangeur serve`.
+Téléchargez le fichier de votre système sur la page [**Releases**](https://github.com/keketrial/kesal-rangeur/releases/latest).
+
+- **Windows** : dézippez, puis double-cliquez sur `kesal-rangeur.exe` et ouvrez <http://localhost:3050> dans votre navigateur. Si Windows affiche « Windows a protégé votre ordinateur » (le programme n'est pas signé), cliquez sur *Informations complémentaires*, puis *Exécuter quand même*. Laissez la fenêtre ouverte : la fermer arrête l'appli.
+- **Linux / macOS** : décompressez, puis lancez `./kesal-rangeur serve`.
 
 ### Compiler
 

@@ -26,7 +26,7 @@ On first launch the app is in **Simulation**: it shows everything it would do (f
 ```yaml
 services:
   rangeur:
-    image: ghcr.io/YOUR-ACCOUNT/kesal-rangeur:latest
+    image: ghcr.io/keketrial/kesal-rangeur:latest
     ports: ["3050:3050"]
     user: "1026:100"                 # PUID:PGID of your media owner
     volumes:
@@ -36,9 +36,12 @@ services:
 
 Keep a **single mount** for the incoming folder and the destinations: that is what makes copies and moves instant. Then open `http://server-address:3050`.
 
-### Binaries
+### Windows, Linux, macOS
 
-Windows, Linux and macOS: see *Releases*. Run `kesal-rangeur serve`.
+Download the file for your system from the [**Releases**](https://github.com/keketrial/kesal-rangeur/releases/latest) page.
+
+- **Windows**: unzip, double-click `kesal-rangeur.exe`, then open <http://localhost:3050> in your browser. If Windows shows "Windows protected your PC" (the program is not signed), click *More info*, then *Run anyway*. Keep the window open: closing it stops the app.
+- **Linux / macOS**: unpack, then run `./kesal-rangeur serve`.
 
 ### Build
 

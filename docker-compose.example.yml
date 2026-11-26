@@ -1,7 +1,7 @@
 # Exemple pour un NAS (Synology…). Adaptez les chemins, le PUID:PGID et, quand vous publierez l'image, son nom.
 services:
   rangeur:
-    image: kesal-rangeur:latest        # ou ghcr.io/VOTRE-COMPTE/kesal-rangeur:latest
+    image: kesal-rangeur:latest        # ou ghcr.io/keketrial/kesal-rangeur:latest
     container_name: kesal-rangeur
     restart: unless-stopped
     user: "1026:100"                   # PUID:PGID du compte qui possède vos médias

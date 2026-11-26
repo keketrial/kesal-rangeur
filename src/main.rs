@@ -58,8 +58,8 @@ async fn main() -> anyhow::Result<()> {
             }
             eprintln!("{} dossiers en {:.1}s", lib.len(), t.elapsed().as_secs_f32());
         }
-        Some("serve") => {
-            // kesal-rangeur serve [config.toml] : interface web (port 3050 par défaut, KESAL_BIND pour changer)
+        Some("serve") | None => {
+            // kesal-rangeur [serve] [config.toml] : (sans argument = serve, pour un double-clic sous Windows) interface web (port 3050 par défaut, KESAL_BIND pour changer)
             let cfg_path = std::path::PathBuf::from(args.get(2).cloned().or_else(|| std::env::var("KESAL_CONFIG").ok()).unwrap_or("data/config.toml".into()));
             let bind = std::env::var("KESAL_BIND").unwrap_or("0.0.0.0:3050".into());
             web::serve(cfg_path, bind).await?;
