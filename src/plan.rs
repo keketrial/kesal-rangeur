@@ -201,6 +201,26 @@ pub struct Placement {
     pub dst: PathBuf,
 }
 
+/// Dossier de la bibliothèque où vivent déjà les épisodes de la saison `season` (le plus utilisé).
+/// Peut être le dossier de la série lui-même quand les épisodes sont posés en vrac.
+fn season_dir(show: &Path, season: u16) -> Option<PathBuf> {
+    let mut count: HashMap<PathBuf, usize> = HashMap::new();
+    for w in WalkDir::new(show).min_depth(1).max_depth(3).into_iter().filter_map(|e| e.ok()) {
+        if !w.file_type().is_file() || !w.path().extension().and_then(|x| x.to_str()).map_or(false, parser::is_video_ext) {
+            continue;
+        }
+        let rel = w.path().strip_prefix(show).unwrap_or(w.path());
+        if let Some((s, _)) = naming::episode_of(rel, None) {
+            if s == season {
+                if let Some(parent) = w.path().parent() {
+                    *count.entry(parent.to_path_buf()).or_default() += 1;
+                }
+            }
+        }
+    }
+    count.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.components().count().cmp(&a.0.components().count()))).map(|(p, _)| p)
+}
+
 /// Fichiers d'un élément (chemins relatifs et tailles). Un fichier seul donne son propre nom.
 pub fn list_files(source: &Path) -> Vec<(PathBuf, u64)> {
     if source.is_file() {
@@ -487,6 +507,75 @@ impl Planner {
         Decision::Ranger { vers: base, nouveau_dossier: nouveau, renumerotation: renum, renommages, fichiers }
     }
 
+    /// Série déjà (en partie) dans la bibliothèque et une saison ou une intégrale arrive par-dessus : on compare épisode
+    /// par épisode. Ce qui est déjà là n'est pas recopié, seuls les épisodes manquants sont rangés (dans le dossier de
+    /// leur saison s'il existe). `None` = cas non géré ici (nommage activé, épisode seul, noms illisibles, bibliothèque
+    /// dont les noms ne donnent pas les épisodes) : l'ancien comportement s'applique.
+    fn partial_decision(&self, item: &Item, lib: &LibEntry) -> Option<Decision> {
+        if self.cfg.naming.formats().is_some() || !item.release.episodes.is_empty() {
+            return None;
+        }
+        // Garde-fou : si la bibliothèque a des vidéos dont l'épisode n'est pas lisible dans le nom, on ne peut pas
+        // savoir ce qui manque, et on risquerait un doublon.
+        if lib.videos == 0 || lib.episodes.len() < lib.videos {
+            return None;
+        }
+        let files = tokio::task::block_in_place(|| list_files(&item.source));
+        let hint = if let [s] = item.release.seasons.as_slice() { Some(*s) } else { None };
+        let known = |s: u16, eps: &[u16]| eps.iter().all(|e| lib.episodes.contains(&(s, *e)));
+        let mut have = 0usize;
+        // (fichier relatif, saison, épisodes, est une vidéo)
+        let mut items: Vec<(PathBuf, u16, Vec<u16>, bool)> = Vec::new();
+        for (p, _) in &files {
+            let name = p.file_name()?.to_string_lossy().to_string();
+            let is_vid = p.extension().and_then(|x| x.to_str()).map_or(false, parser::is_video_ext);
+            if !is_vid && !naming::is_sub(&name) {
+                continue; // .nfo, images… : laissés où ils sont
+            }
+            match naming::episode_of(p, hint) {
+                Some((s, eps)) => items.push((p.clone(), s, eps, is_vid)),
+                None if is_vid => return None, // une vidéo dont on ne sait pas l'épisode : on ne devine pas
+                None => {}
+            }
+        }
+        let vids: Vec<_> = items.iter().filter(|i| i.3).collect();
+        if vids.is_empty() {
+            return None;
+        }
+        for v in &vids {
+            if known(v.1, &v.2) {
+                have += 1;
+            }
+        }
+        if have == vids.len() {
+            return Some(Decision::Doublon { existant: lib.path.clone(), raison: format!("tous les épisodes existent déjà ({have} fichier(s))") });
+        }
+        // Aucun recoupement et saison absente de la bibliothèque : c'est une vraie nouvelle saison, rangée en bloc comme avant.
+        if have == 0 && !vids.iter().any(|v| lib.seasons.contains(&v.1)) {
+            return None;
+        }
+        let mut dirs: HashMap<u16, Option<PathBuf>> = HashMap::new();
+        let mut out: Vec<Placement> = Vec::new();
+        for (p, s, eps, _) in &items {
+            if known(*s, eps) {
+                continue;
+            }
+            let existing = dirs.entry(*s).or_insert_with(|| season_dir(&lib.path, *s)).clone();
+            let fname = p.file_name()?.to_os_string();
+            let dst = match existing {
+                Some(d) => d.join(fname),
+                // saison absente : on garde le dossier d'origine (celui de la saison, ou le dossier de la release)
+                None if p.components().count() > 1 => lib.path.join(p),
+                None => lib.path.join(&item.nom).join(p),
+            };
+            out.push(Placement { src: abs_src(&item.source, p), dst });
+        }
+        if out.is_empty() {
+            return None;
+        }
+        Some(Decision::Ranger { vers: lib.path.clone(), nouveau_dossier: false, renumerotation: None, renommages: vec![], fichiers: out })
+    }
+
     async fn decide(&self, item: &mut Item, input: &Input) -> Decision {
         let rel = item.release.clone();
         if rel.title.is_empty() {
@@ -516,6 +605,9 @@ impl Planner {
                 }
             } else if !rel.seasons.is_empty() && rel.episodes.is_empty() {
                 if let Some(lib) = self.find_series(&[rel.title.as_str()], rel.year) {
+                    if let Some(d) = self.partial_decision(item, lib) {
+                        return d;
+                    }
                     if rel.seasons.iter().all(|s| lib.seasons.contains(s)) {
                         return Decision::Doublon { existant: lib.path.clone(), raison: format!("saison(s) {:?} déjà présente(s)", rel.seasons) };
                     }
@@ -548,6 +640,9 @@ impl Planner {
             // Seulement si on garde les noms d'origine : renommer exige la bonne fiche pour les titres d'épisodes.
             if rel.is_series_like() && self.cfg.naming.formats().is_none() {
                 if let Some(lib) = self.find_series(&[rel.title.as_str()], rel.year) {
+                    if let Some(d) = self.partial_decision(item, lib) {
+                        return d;
+                    }
                     if !rel.seasons.is_empty() && rel.episodes.is_empty() && rel.seasons.iter().all(|s| lib.seasons.contains(s)) {
                         return Decision::Doublon { existant: lib.path.clone(), raison: format!("saison(s) {:?} déjà présente(s)", rel.seasons) };
                     }
@@ -612,6 +707,11 @@ impl Planner {
         };
         match self.find_series_years(&names, c.year, rel.year) {
             Some(lib) => {
+                if renum.is_none() {
+                    if let Some(d) = self.partial_decision(item, lib) {
+                        return d;
+                    }
+                }
                 if !seasons.is_empty() && rel.episodes.is_empty() && seasons.iter().all(|s| lib.seasons.contains(s)) {
                     return Decision::Doublon { existant: lib.path.clone(), raison: format!("saison(s) {seasons:?} déjà présente(s)") };
                 }
@@ -719,5 +819,96 @@ mod tests {
         // pas de faux positif
         assert_eq!(renumber_season("Show.S20E01.mkv", 2, 1), "Show.S20E01.mkv");
         assert_eq!(renumber_season("Les.S2.Aventures.S03E01.mkv", 3, 1), "Les.S2.Aventures.S01E01.mkv");
+    }
+
+    fn touch(p: &Path, c: &str) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, c).unwrap();
+    }
+
+    /// Bibliothèque : « Show (2020)/Season 1 » avec les épisodes 1 à 3. Retourne (planner, arrivée, entrée).
+    fn labo(t: &Path, arrivee: &str, episodes: &[u16]) -> (Planner, PathBuf, Input) {
+        let lib = t.join("series");
+        for e in 1..=3 {
+            touch(&lib.join(format!("Show (2020)/Season 1/Show.S01E0{e}.1080p.mkv")), "ancien");
+        }
+        let arr = t.join("arrivee");
+        for e in episodes {
+            touch(&arr.join(arrivee).join(format!("Show.S01E{e:02}.MULTi.1080p.WEB-GRP.mkv")), &format!("nouveau{e}"));
+        }
+        touch(&arr.join(arrivee).join("Show.nfo"), "nfo");
+        let mut cfg = crate::web::default_config();
+        cfg.destinations.insert(Category::Serie, lib);
+        cfg.data_dir = t.join("data");
+        let tmdb = Arc::new(Tmdb::new("x".into(), "fr-FR".into(), &cfg.data_dir).unwrap());
+        let planner = Planner::new(Arc::new(cfg), tmdb);
+        let input = Input { path: arr.clone(), mode: "auto".into(), action: "move".into(), settle_minutes: 0 };
+        (planner, arr, input)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn saison_complete_sur_serie_partielle_ne_range_que_les_manquants() {
+        let t = tempfile::tempdir().unwrap();
+        let (pl, arr, input) = labo(t.path(), "Show.S01.MULTi.1080p.WEB-GRP", &[1, 2, 3, 4, 5]);
+        let it = pl.plan_one(&input, &arr.join("Show.S01.MULTi.1080p.WEB-GRP")).await;
+        let Decision::Ranger { fichiers, .. } = &it.decision else { panic!("{:?}", it.decision) };
+        let mut noms: Vec<String> = fichiers.iter().map(|f| f.dst.strip_prefix(t.path().join("series")).unwrap().to_string_lossy().to_string()).collect();
+        noms.sort();
+        assert_eq!(
+            noms,
+            vec!["Show (2020)/Season 1/Show.S01E04.MULTi.1080p.WEB-GRP.mkv".to_string(), "Show (2020)/Season 1/Show.S01E05.MULTi.1080p.WEB-GRP.mkv".to_string()],
+            "seuls les épisodes 4 et 5, dans le dossier de saison existant"
+        );
+        // et le rangement réel ne touche pas aux épisodes déjà là
+        let plan: Vec<(PathBuf, PathBuf)> = fichiers.iter().map(|f| (f.src.clone(), f.dst.clone())).collect();
+        let r = crate::exec::execute(&crate::exec::Request { nom: "x", titre: "Show", categorie: Some(Category::Serie), source: &arr.join("Show.S01.MULTi.1080p.WEB-GRP"), vers: &t.path().join("series/Show (2020)"), renommages: &[], action: crate::exec::Action::Move, method: crate::exec::Method::Copy, settle_minutes: 0, plan: &plan });
+        assert!(r.is_ok(), "{r:?}");
+        let lib = t.path().join("series/Show (2020)/Season 1");
+        assert_eq!(std::fs::read_to_string(lib.join("Show.S01E01.1080p.mkv")).unwrap(), "ancien");
+        assert_eq!(std::fs::read_to_string(lib.join("Show.S01E04.MULTi.1080p.WEB-GRP.mkv")).unwrap(), "nouveau4");
+        assert!(arr.join("Show.S01.MULTi.1080p.WEB-GRP/Show.S01E01.MULTi.1080p.WEB-GRP.mkv").exists(), "les doublons restent dans l'arrivée (jamais supprimés)");
+        assert!(!arr.join("Show.S01.MULTi.1080p.WEB-GRP/Show.S01E04.MULTi.1080p.WEB-GRP.mkv").exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn saison_deja_complete_reste_un_doublon() {
+        let t = tempfile::tempdir().unwrap();
+        let (pl, arr, input) = labo(t.path(), "Show.S01.MULTi.1080p.WEB-GRP", &[1, 2, 3]);
+        let it = pl.plan_one(&input, &arr.join("Show.S01.MULTi.1080p.WEB-GRP")).await;
+        assert!(matches!(&it.decision, Decision::Doublon { raison, .. } if raison.contains("tous les épisodes")), "{:?}", it.decision);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn episodes_suivants_sans_recoupement_sont_ranges() {
+        // la bibliothèque a 1-3, la saison reçue n'a que 4-6 : avant, « saison déjà présente » les bloquait
+        let t = tempfile::tempdir().unwrap();
+        let (pl, arr, input) = labo(t.path(), "Show.S01.MULTi.1080p.WEB-GRP", &[4, 5, 6]);
+        let it = pl.plan_one(&input, &arr.join("Show.S01.MULTi.1080p.WEB-GRP")).await;
+        let Decision::Ranger { fichiers, .. } = &it.decision else { panic!("{:?}", it.decision) };
+        assert_eq!(fichiers.len(), 3);
+        assert!(fichiers.iter().all(|f| f.dst.parent().unwrap().ends_with("Show (2020)/Season 1")));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn integrale_sur_serie_partielle_complete_les_trous() {
+        // la bibliothèque a S01E01-03 ; l'intégrale apporte S01E01-03 (déjà là), S01E04 (manque) et toute la saison 2
+        let t = tempfile::tempdir().unwrap();
+        let (pl, arr, input) = labo(t.path(), "Show.COMPLETE.MULTi.1080p-GRP", &[]);
+        let root = arr.join("Show.COMPLETE.MULTi.1080p-GRP");
+        for e in 1..=4 {
+            touch(&root.join(format!("Show.S01.1080p/Show.S01E{e:02}.mkv")), "x");
+        }
+        for e in 1..=2 {
+            touch(&root.join(format!("Show.S02.1080p/Show.S02E{e:02}.mkv")), "y");
+        }
+        // (l'identification TMDB d'une intégrale n'est pas joignable en test : on appelle la comparaison directement)
+        let nom = "Show.COMPLETE.MULTi.1080p-GRP".to_string();
+        let it = Item { source: root.clone(), entree: input.path.clone(), release: parser::parse(&nom), nom, reconnu: None, candidats: vec![], decision: Decision::Ignorer { raison: String::new() } };
+        let lib = pl.find_series(&["Show"], None).expect("série de la bibliothèque");
+        let d = pl.partial_decision(&it, lib).expect("comparaison épisode par épisode");
+        let Decision::Ranger { fichiers, .. } = &d else { panic!("{d:?}") };
+        let mut noms: Vec<String> = fichiers.iter().map(|f| f.dst.strip_prefix(t.path().join("series")).unwrap().to_string_lossy().to_string()).collect();
+        noms.sort();
+        assert_eq!(noms, vec!["Show (2020)/Season 1/Show.S01E04.mkv", "Show (2020)/Show.S02.1080p/Show.S02E01.mkv", "Show (2020)/Show.S02.1080p/Show.S02E02.mkv"]);
     }
 }

@@ -1,5 +1,13 @@
 # Notes de version / Changelog
 
+## 0.1.3 — 26/11/2026
+
+**Nouveauté : une saison ou une série entière peut arriver par-dessus des épisodes déjà rangés**
+- Quand une saison (ou une intégrale) arrive alors que la série est déjà en partie dans la bibliothèque, l'appli compare **épisode par épisode** : ceux qui sont déjà là ne sont pas recopiés, **seuls les épisodes manquants sont rangés**, dans le dossier de leur saison s'il existe.
+- Si tout est déjà là : « tous les épisodes existent déjà » (doublon). Les fichiers en double restent dans le dossier d'arrivée, rien n'est jamais supprimé ni écrasé.
+- Une saison reçue dont les épisodes suivent ceux de la bibliothèque (ex. 4 à 6 après 1 à 3) n'est plus bloquée par « saison déjà présente ».
+- Par prudence, si certains noms de la bibliothèque ne permettent pas de lire le numéro d'épisode, l'appli garde l'ancien comportement plutôt que de risquer un doublon. Cette comparaison s'applique avec les noms d'origine gardés (pas encore avec le nommage personnalisé).
+
 ## 0.1.2 — 26/11/2026
 
 **Correction**
